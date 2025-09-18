@@ -1,103 +1,208 @@
-import Image from "next/image";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+const MOCK_RESULTS = [
+  { label: "Incremental Revenue", value: "£1.2m" },
+  { label: "Incremental Gross Profit", value: "£720k" },
+  { label: "ROI", value: "186%" },
+  { label: "Break-even Wins", value: "6" },
+  { label: "Payback", value: "7.5 months" },
+];
 
 export default function Home() {
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="min-h-dvh bg-background">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10 lg:gap-8 lg:px-10">
+        <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+          <div className="space-y-2">
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground lg:text-4xl">
+              Planning-stage ABM ROI Calculator
+            </h1>
+            <p className="max-w-2xl text-base text-muted-foreground">
+              Capture programme assumptions, model baseline versus ABM scenarios, and export a
+              client-ready business case. Inputs are grouped so we can progressively wire the
+              calculation engine and guardrails.
+            </p>
+          </div>
+          <Button size="lg" className="self-start bg-cta text-white hover:bg-cta/90" disabled>
+            Export (coming soon)
+          </Button>
+        </header>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+        <main className="grid gap-6 lg:grid-cols-[2fr_1fr] xl:gap-8">
+          <section className="flex flex-col gap-6 lg:gap-8">
+            <Card className="shadow-sm">
+              <CardHeader>
+                <CardTitle>Programme Settings</CardTitle>
+                <CardDescription>
+                  Duration, ramp, and formatting controls that gate downstream calculations.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-6 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="duration">Programme duration (months)</Label>
+                  <Input id="duration" defaultValue={12} inputMode="numeric" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ramp">Ramp-up period (months)</Label>
+                  <Input id="ramp" defaultValue={3} inputMode="numeric" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="currency">Currency</Label>
+                  <Select defaultValue="gbp">
+                    <SelectTrigger id="currency">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="gbp">GBP (£)</SelectItem>
+                      <SelectItem value="usd">USD ($)</SelectItem>
+                      <SelectItem value="eur">EUR (€)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="formatting">Number formatting</Label>
+                  <Select defaultValue="en-gb">
+                    <SelectTrigger id="formatting">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="en-gb">English (UK)</SelectItem>
+                      <SelectItem value="en-us">English (US)</SelectItem>
+                      <SelectItem value="en-eu">English (EU)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm">
+              <CardHeader>
+                <CardTitle>Market & Funnel Inputs</CardTitle>
+                <CardDescription>
+                  Manual entries for addressable accounts, funnels, and baseline conversion metrics.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-6 md:grid-cols-2">
+                <Field id="accounts" label="Target accounts" defaultValue="150" />
+                <Field id="in-market" label="In-market rate (%)" defaultValue="35" />
+                <Field
+                  id="opps"
+                  label="Qualified opps per in-market account"
+                  defaultValue="0.6"
+                />
+                <Field id="win-rate" label="Baseline win rate (%)" defaultValue="22" />
+                <Field id="acv" label="Baseline ACV" defaultValue="65000" prefix="£" />
+                <Field id="margin" label="Contribution margin (%)" defaultValue="55" />
+                <Field id="cycle-base" label="Sales cycle (baseline months)" defaultValue="9" />
+                <Field id="cycle-abm" label="Sales cycle (ABM months)" defaultValue="6" />
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm">
+              <CardHeader>
+                <CardTitle>ABM Uplifts & Programme Costs</CardTitle>
+                <CardDescription>
+                  Uplifts apply to baseline metrics; cost entries power ROI, break-even and payback.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-6 md:grid-cols-2">
+                <Field id="uplift-win" label="Win-rate uplift (pp)" defaultValue="12" />
+                <Field id="uplift-acv" label="ACV uplift (%)" defaultValue="18" />
+                <Field id="uplift-opp" label="Opportunity-rate uplift (%)" defaultValue="25" />
+                <Field id="people-cost" label="People cost" defaultValue="220000" prefix="£" />
+                <Field id="media-cost" label="Media" defaultValue="90000" prefix="£" />
+                <Field id="data-cost" label="Data & tech" defaultValue="45000" prefix="£" />
+                <Field id="content-cost" label="Content" defaultValue="60000" prefix="£" />
+                <Field id="agency-cost" label="Agency & partners" defaultValue="40000" prefix="£" />
+                <Field id="other-cost" label="Other" defaultValue="15000" prefix="£" />
+              </CardContent>
+            </Card>
+          </section>
+
+          <aside className="flex flex-col gap-6 lg:gap-8">
+            <Card className="shadow-sm">
+              <CardHeader>
+                <CardTitle>Financial Snapshot</CardTitle>
+                <CardDescription>
+                  Hook up to calculation engine for live outputs and guardrails.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <ul className="space-y-3">
+                  {MOCK_RESULTS.map((metric) => (
+                    <li key={metric.label} className="flex items-baseline justify-between">
+                      <span className="text-sm text-muted-foreground">{metric.label}</span>
+                      <span className="text-base font-medium text-foreground">
+                        {metric.value}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-xs text-muted-foreground">
+                  Placeholder values for layout only. Replace with deterministic calculations and
+                  validation messaging.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm">
+              <CardHeader>
+                <CardTitle>Sensitivity Grid</CardTitle>
+                <CardDescription>
+                  Default 5×5 matrix to explore in-market and win-rate uplift combinations.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-lg border border-dashed bg-muted/40 p-4 text-sm text-muted-foreground">
+                  Sensitivity visualisation placeholder. Implement ROI grid calculations and
+                  heat-map once engine & formatting utilities are in place.
+                </div>
+              </CardContent>
+            </Card>
+          </aside>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  id,
+  label,
+  defaultValue,
+  prefix,
+}: {
+  id: string;
+  label: string;
+  defaultValue?: string | number;
+  prefix?: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="relative">
+        {prefix ? (
+          <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-muted-foreground">
+            {prefix}
+          </span>
+        ) : null}
+        <Input
+          id={id}
+          defaultValue={defaultValue}
+          inputMode="decimal"
+          className={prefix ? "pl-7" : undefined}
+        />
+      </div>
     </div>
   );
 }
