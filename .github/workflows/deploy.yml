@@ -1,0 +1,51 @@
+name: deploy to droplet
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DO_HOST: 64.227.36.163
+      DO_USER: josh
+      APP_DIR: /var/www/sabm_roi_calc
+      PM2_NAME: sabm-roi
+      PORT: 3000
+
+    steps:
+      - name: add droplet host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$DO_HOST" >> ~/.ssh/known_hosts
+
+      - name: deploy via ssh
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ env.DO_HOST }}
+          username: ${{ env.DO_USER }}
+          port: 22
+          key: ${{ secrets.DO_SSH_KEY }}
+          script_stop: true
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+
+            cd "$APP_DIR"
+
+            echo "-> pull latest from origin/main"
+            git fetch --all
+            git reset --hard origin/main
+
+            echo "-> install deps"
+            npm ci
+
+            echo "-> build (prod)"
+            NODE_ENV=production NODE_OPTIONS
