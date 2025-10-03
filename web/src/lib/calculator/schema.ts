@@ -4,27 +4,10 @@ import { CurrencyCode, ScenarioInputs } from "./types";
 
 const currencyEnum = z.enum(["GBP", "USD", "EUR"] satisfies CurrencyCode[]);
 
-const normalizeNumber = (schema: z.ZodNumber) =>
-  z.preprocess((value) => {
-    if (value === undefined || value === null || value === "") {
-      return 0;
-    }
-
-    return value;
-  }, schema);
-
-const percentage = (min: number, max: number) =>
-  normalizeNumber(
-    z
-      .number({ invalid_type_error: "Enter a percentage." })
-      .min(min, { message: `Must be ≥ ${min}%.` })
-      .max(max, { message: `Must be ≤ ${max}%.` }),
-  );
-
 export const programmeSchema = z
   .object({
-    durationMonths: normalizeNumber(z.number().min(0).max(24)),
-    rampMonths: normalizeNumber(z.number().min(0).max(24)),
+    durationMonths: z.number().min(0).max(24),
+    rampMonths: z.number().min(0).max(24),
     currency: currencyEnum,
     numberFormatLocale: z.string().min(2),
   })
@@ -35,14 +18,14 @@ export const programmeSchema = z
 
 export const marketSchema = z
   .object({
-    targetAccounts: normalizeNumber(z.number().min(0).max(2000)),
-    inMarketRate: percentage(0, 70),
-    qualifiedOppsPerAccount: normalizeNumber(z.number().min(0).max(3)),
-    baselineWinRate: percentage(0, 60),
-    baselineAcv: normalizeNumber(z.number().min(0)),
-    contributionMargin: percentage(0, 95),
-    salesCycleMonthsBaseline: normalizeNumber(z.number().min(0).max(24)),
-    salesCycleMonthsAbm: normalizeNumber(z.number().min(0).max(24)),
+    targetAccounts: z.number().min(0).max(2000),
+    inMarketRate: z.number().min(0).max(70),
+    qualifiedOppsPerAccount: z.number().min(0).max(3),
+    baselineWinRate: z.number().min(0).max(60),
+    baselineAcv: z.number().min(0),
+    contributionMargin: z.number().min(0).max(95),
+    salesCycleMonthsBaseline: z.number().min(0).max(24),
+    salesCycleMonthsAbm: z.number().min(0).max(24),
   })
   .refine((value) => value.salesCycleMonthsAbm <= value.salesCycleMonthsBaseline, {
     path: ["salesCycleMonthsAbm"],
@@ -50,19 +33,19 @@ export const marketSchema = z
   });
 
 export const upliftSchema = z.object({
-  winRateUplift: percentage(0, 20),
-  acvUplift: percentage(-30, 100),
-  opportunityRateUplift: percentage(0, 100),
+  winRateUplift: z.number().min(0).max(20),
+  acvUplift: z.number().min(-30).max(100),
+  opportunityRateUplift: z.number().min(0).max(100),
 });
 
 export const costsSchema = z
   .object({
-    people: normalizeNumber(z.number().min(0)),
-    media: normalizeNumber(z.number().min(0)),
-    dataTech: normalizeNumber(z.number().min(0)),
-    content: normalizeNumber(z.number().min(0)),
-    agency: normalizeNumber(z.number().min(0)),
-    other: normalizeNumber(z.number().min(0)),
+    people: z.number().min(0),
+    media: z.number().min(0),
+    dataTech: z.number().min(0),
+    content: z.number().min(0),
+    agency: z.number().min(0),
+    other: z.number().min(0),
   })
   .refine((value) => Object.values(value).some((cost) => cost > 0), {
     message: "At least one cost line must be greater than zero.",
@@ -72,9 +55,9 @@ const tierEnum = z.enum(["1to1", "1toFew", "1toMany"]);
 
 export const coverageSchema = z.object({
   tier: tierEnum,
-  minBudgetPerAccount: normalizeNumber(z.number().min(0)),
-  maxTreatedAccounts: normalizeNumber(z.number().min(0)),
-  intensityExponent: normalizeNumber(z.number().min(0.1).max(2)),
+  minBudgetPerAccount: z.number().min(0),
+  maxTreatedAccounts: z.number().min(0),
+  intensityExponent: z.number().min(0.1).max(2),
 });
 
 export const sensitivitySchema = z.object({
