@@ -47,3 +47,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Next.js generated files
+next-env.d.ts
