@@ -181,8 +181,8 @@ const setupValidationMap: Record<SetupStep, Array<FieldPath<ScenarioInputSchema>
 };
 
 export function ScenarioPlanner() {
-  // Narrow the resolver output to ScenarioInputSchema to avoid RHF v7 + Zod v4 input/output generic mismatch
-  const resolver = zodResolver(scenarioSchema) as unknown as Resolver<ScenarioInputSchema>;
+  // Fix zodResolver type inference issue by casting to proper resolver type
+  const resolver = zodResolver(scenarioSchema) as Resolver<ScenarioInputSchema>;
 
   const form = useForm<ScenarioInputSchema>({
     resolver,
