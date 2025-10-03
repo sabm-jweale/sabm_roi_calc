@@ -1,36 +1,8 @@
-name: deploy to droplet
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch: {}
-
-concurrency:
-  group: deploy-main
-  cancel-in-progress: true
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      DO_HOST: 64.227.36.163
-      DO_USER: josh
-      APP_DIR: /var/www/sabm_roi_calc
-      PM2_NAME: sabm-roi
-      PORT: 3000
-
-    steps:
-      - name: add droplet host key
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H "$DO_HOST" >> ~/.ssh/known_hosts
-
       - name: deploy via ssh
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ env.DO_HOST }}
-          username: ${{ env.DO_USER }}
+          host: 64.227.36.163
+          username: josh
           port: 22
           key: ${{ secrets.DO_SSH_KEY }}
           script_stop: true
@@ -38,8 +10,11 @@ jobs:
           script: |
             set -euo pipefail
 
-            cd "$APP_DIR"
+            APP_DIR=/var/www/sabm_roi_calc
+            PM2_NAME=sabm-roi
+            PORT=3000
 
+            cd "$APP_DIR"
             echo "-> pull latest from origin/main"
             git fetch --all
             git reset --hard origin/main
@@ -48,4 +23,21 @@ jobs:
             npm ci
 
             echo "-> build (prod)"
-            NODE_ENV=production NODE_OPTIONS
+            NODE_ENV=production NODE_OPTIONS="--max-old-space-size=1024" npm run build
+
+            echo "-> ensure pm2 present"
+            if ! command -v pm2 >/dev/null 2>&1; then
+              sudo npm i -g pm2
+              sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u $USER --hp $HOME || true
+            fi
+
+            echo "-> start/restart service (bind to localhost)"
+            if pm2 describe "$PM2_NAME" >/dev/null 2>&1; then
+              pm2 restart "$PM2_NAME" -- start -H 127.0.0.1 -p $PORT
+            else
+              pm2 start ./node_modules/.bin/next --name "$PM2_NAME" -- start -H 127.0.0.1 -p $PORT
+            fi
+            pm2 save
+
+            echo "-> health checks"
+            curl -s -I http://127.0.0.1:$PORT | head -n1 || (pm2 logs "$PM2_NAME" --lines 100 && false)
