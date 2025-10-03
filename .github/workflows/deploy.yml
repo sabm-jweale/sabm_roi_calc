@@ -1,3 +1,30 @@
+name: deploy to droplet
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_DIR: /var/www/sabm_roi_calc
+      PM2_NAME: sabm-roi
+      PORT: 3000
+
+    steps:
+      - name: add droplet host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H 64.227.36.163 >> ~/.ssh/known_hosts
+
       - name: deploy via ssh
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -5,16 +32,13 @@
           username: josh
           port: 22
           key: ${{ secrets.DO_SSH_KEY }}
+          envs: APP_DIR,PM2_NAME,PORT
           script_stop: true
           command_timeout: 15m
           script: |
             set -euo pipefail
-
-            APP_DIR=/var/www/sabm_roi_calc
-            PM2_NAME=sabm-roi
-            PORT=3000
-
             cd "$APP_DIR"
+
             echo "-> pull latest from origin/main"
             git fetch --all
             git reset --hard origin/main
@@ -39,5 +63,5 @@
             fi
             pm2 save
 
-            echo "-> health checks"
-            curl -s -I http://127.0.0.1:$PORT | head -n1 || (pm2 logs "$PM2_NAME" --lines 100 && false)
+            echo "-> health check"
+            curl -s -I http://127.0.0.1:$PORT | head -n1
