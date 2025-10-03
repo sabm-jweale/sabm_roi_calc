@@ -6,47 +6,61 @@ out/
 web/.next/
 web/out/
 web/.tmp/
+build/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
 
-# Env & config
+# Testing & coverage
+coverage/
+*.lcov
+
+# Next.js
+/.next/
+/out/
+
+# Production
+/build
+
+# Environment & config
 .env
 .env.local
 .env.*
 !.env.example
+.vercel
 
-# Logs & debugging
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Debug & logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# Editor & OS
+# Editor & IDE
 .DS_Store
 .vscode/
 .idea/
 *.swp
-
-# Coverage & test artifacts
-coverage/
-*.lcov
-
-# Build artifacts and cache
-*.tgz
-*.tar.gz
-
-# IDE and editor files
 *.log
-.DS_Store
 Thumbs.db
-
-# OS generated files
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
-
-# Temporary files
 *.tmp
 *.temp
 
-# Next.js generated files
-next-env.d.ts
+# OS & system
+.DS_Store
+*.pem
+
+# Build artifacts
+*.tgz
+*.tar.gz
