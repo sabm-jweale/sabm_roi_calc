@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      DO_HOST: 64.227.36.163
+      DO_USER: josh
       APP_DIR: /var/www/sabm_roi_calc
       PM2_NAME: sabm-roi
       PORT: 3000
@@ -23,20 +25,21 @@ jobs:
       - name: add droplet host key
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H 64.227.36.163 >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$DO_HOST" >> ~/.ssh/known_hosts
 
       - name: deploy via ssh
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 64.227.36.163
-          username: josh
+          host: ${{ env.DO_HOST }}
+          username: ${{ env.DO_USER }}
           port: 22
-          key: ${{ secrets.DO_SSH_KEY }}
+          key: ${{ secrets.DO_SSH_KEY }}   # secret containing your PRIVATE key
           envs: APP_DIR,PM2_NAME,PORT
           script_stop: true
           command_timeout: 15m
           script: |
             set -euo pipefail
+
             cd "$APP_DIR"
 
             echo "-> pull latest from origin/main"
@@ -49,7 +52,7 @@ jobs:
             echo "-> build (prod)"
             NODE_ENV=production NODE_OPTIONS="--max-old-space-size=1024" npm run build
 
-            echo "-> ensure pm2 present"
+            echo "-> ensure pm2 present and enabled on boot"
             if ! command -v pm2 >/dev/null 2>&1; then
               sudo npm i -g pm2
               sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u $USER --hp $HOME || true
@@ -63,5 +66,18 @@ jobs:
             fi
             pm2 save
 
-            echo "-> health check"
-            curl -s -I http://127.0.0.1:$PORT | head -n1
+            echo "-> health check (with retries)"
+            for i in {1..30}; do
+              if curl -fsI "http://127.0.0.1:$PORT" >/dev/null; then
+                echo "OK: app is responding on 127.0.0.1:$PORT"
+                break
+              fi
+              echo "waiting for app... ($i/30)"
+              sleep 2
+            done
+
+            if ! curl -fsI "http://127.0.0.1:$PORT" >/dev/null; then
+              echo "app did not become healthy in time — dumping logs"
+              pm2 logs "$PM2_NAME" --lines 200 || true
+              exit 1
+            fi
