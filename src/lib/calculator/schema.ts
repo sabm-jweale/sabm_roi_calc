@@ -86,7 +86,7 @@ export const DEFAULT_SCENARIO: ScenarioInputs = scenarioSchema.parse({
   },
   market: {
     targetAccounts: 150,
-    inMarketRate: 35,
+    inMarketRate: 18,
     qualifiedOppsPerAccount: 0.6,
     baselineWinRate: 22,
     baselineAcv: 65_000,
@@ -108,7 +108,7 @@ export const DEFAULT_SCENARIO: ScenarioInputs = scenarioSchema.parse({
     other: 15_000,
   },
   sensitivity: {
-    inMarketRange: [25, 35, 45],
+    inMarketRange: [12, 18, 24],
     winRateUpliftRange: [5, 10, 15],
     resolution: 5,
   },
