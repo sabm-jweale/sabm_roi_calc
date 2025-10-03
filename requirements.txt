@@ -1,0 +1,2 @@
+# Python dependencies for auxiliary tooling (exports, scripting)
+# Pin versions when packages are introduced.
