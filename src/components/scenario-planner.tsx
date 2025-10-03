@@ -1,7 +1,16 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type RefObject,
+  type ReactNode,
+} from "react";
 import { useForm, type Control, type FieldPath, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Info } from "lucide-react";
@@ -71,6 +80,13 @@ type StepConfig = {
   id: SetupStep;
   title: string;
   description: string;
+};
+
+type CoachStepConfig = {
+  id: string;
+  title: string;
+  description: string;
+  target: RefObject<HTMLElement | null>;
 };
 
 const SETUP_STEPS: StepConfig[] = [
@@ -226,10 +242,16 @@ export function ScenarioPlanner() {
   const [cyclePreset, setCyclePreset] = useState<CyclePresetKey>("typical");
   const [cycleOverrideEnabled, setCycleOverrideEnabled] = useState(false);
   const [showCoach, setShowCoach] = useState(false);
+  const [coachStep, setCoachStep] = useState(0);
   const [showDetails, setShowDetails] = useState(false);
   const [inMarketAuto, setInMarketAuto] = useState(true);
   const [buyingWindowMonths, setBuyingWindowMonths] = useState(() => DEFAULT_BUYING_WINDOW_MONTHS[tier]);
   const [customBuyingWindow, setCustomBuyingWindow] = useState(false);
+
+  const modeNavRef = useRef<HTMLDivElement | null>(null);
+  const setupStepsRef = useRef<HTMLDivElement | null>(null);
+  const presetRef = useRef<HTMLDivElement | null>(null);
+  const setupActionsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -238,15 +260,32 @@ export function ScenarioPlanner() {
 
     const seen = window.localStorage.getItem("sabm-roi-coach");
     if (!seen) {
+      setCoachStep(0);
       setShowCoach(true);
     }
   }, []);
 
-  const dismissCoach = () => {
-    setShowCoach(false);
+  const markCoachSeen = () => {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("sabm-roi-coach", "1");
     }
+  };
+
+  const handleCoachClose = (persistSeen = true) => {
+    setShowCoach(false);
+    setCoachStep(0);
+    if (persistSeen) {
+      markCoachSeen();
+    }
+  };
+
+  const launchCoach = () => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("sabm-roi-coach");
+    }
+    setMode("setup");
+    setCoachStep(0);
+    setShowCoach(true);
   };
 
   const watchedInputs = form.watch();
@@ -690,6 +729,59 @@ export function ScenarioPlanner() {
 
   const setupComplete = scenarioResult !== null;
 
+  const coachSteps = useMemo<CoachStepConfig[]>(
+    () => [
+      {
+        id: "mode-nav",
+        title: "Follow the journey",
+        description:
+          "Switch between setup, tune, and present to move from assumptions to a board-ready pitch.",
+        target: modeNavRef,
+      },
+      {
+        id: "setup-steps",
+        title: "Work through the milestones",
+        description:
+          "Programme, market, and budget are the key inputs. Each card holds the essentials with advanced controls tucked away.",
+        target: setupStepsRef,
+      },
+      {
+        id: "presets",
+        title: "Lean on presets",
+        description:
+          "Tier and quick presets give you sensible defaults. Start here, then fine-tune the numbers that matter most to your plan.",
+        target: presetRef,
+      },
+      {
+        id: "setup-actions",
+        title: "Advance when you’re ready",
+        description:
+          "Use continue to validate a step or jump to tune when the baseline looks good. You can always return here.",
+        target: setupActionsRef,
+      },
+    ],
+    [],
+  );
+
+  const availableCoachSteps = coachSteps.filter((step) => step.target.current);
+  const availableCoachStepCount = availableCoachSteps.length;
+
+  useEffect(() => {
+    if (!showCoach) {
+      return;
+    }
+
+    if (availableCoachStepCount === 0) {
+      setShowCoach(false);
+      setCoachStep(0);
+      return;
+    }
+
+    if (coachStep > availableCoachStepCount - 1) {
+      setCoachStep(availableCoachStepCount - 1);
+    }
+  }, [showCoach, availableCoachStepCount, coachStep]);
+
   return (
     <TooltipProvider delayDuration={200}>
       <Form {...form}>
@@ -714,16 +806,29 @@ export function ScenarioPlanner() {
                   </p>
                 </div>
               </div>
-              <Button
-                size="lg"
-                className="self-start bg-cta text-white hover:bg-cta/90"
-                disabled={!setupComplete}
-              >
-                Export (coming soon)
-              </Button>
+              <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={launchCoach}
+                  disabled={showCoach}
+                >
+                  Guided tour
+                </Button>
+                <Button
+                  size="lg"
+                  className="self-start bg-cta text-white hover:bg-cta/90"
+                  disabled={!setupComplete}
+                >
+                  Export (coming soon)
+                </Button>
+              </div>
             </header>
 
-            <nav className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-2 text-sm font-medium">
+            <nav
+              ref={modeNavRef}
+              className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-2 text-sm font-medium"
+            >
               {(["setup", "tune", "present"] as Mode[]).map((tab) => (
                 <button
                   key={tab}
@@ -742,26 +847,12 @@ export function ScenarioPlanner() {
 
             {mode === "setup" ? (
               <section className="space-y-6">
-                {showCoach ? (
-                  <Card className="border-dashed bg-muted/40">
-                    <CardContent className="space-y-3 pt-6 text-sm text-muted-foreground">
-                      <p>
-                        Welcome in. You&apos;ll glide through three short steps. We&apos;ll only ask for the essentials now; deeper controls live under Advanced.
-                      </p>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <Button size="sm" onClick={dismissCoach}>
-                          Let&apos;s start
-                        </Button>
-                        <p className="text-xs text-muted-foreground/80">
-                          We&apos;ll remember this on next visit.
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ) : null}
 
                 <div className="flex flex-col gap-4">
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div
+                    ref={setupStepsRef}
+                    className="flex flex-wrap items-center gap-3"
+                  >
                     {SETUP_STEPS.map((step, index) => {
                       const active = setupStep === step.id;
                       const completed = SETUP_STEPS.findIndex((s) => s.id === setupStep) > index;
@@ -811,6 +902,7 @@ export function ScenarioPlanner() {
                           selectedTier={tier}
                           onSelectPreset={setPreset}
                           selectedPreset={preset}
+                          highlightRef={presetRef}
                         />
                       ) : null}
 
@@ -839,7 +931,10 @@ export function ScenarioPlanner() {
                         />
                       ) : null}
 
-                      <div className="flex items-center justify-between">
+                      <div
+                        ref={setupActionsRef}
+                        className="flex items-center justify-between"
+                      >
                         <Button
                           type="button"
                           variant="ghost"
@@ -1237,6 +1332,19 @@ export function ScenarioPlanner() {
         </form>
       </Form>
 
+      {showCoach && availableCoachStepCount > 0 ? (
+        <CoachOverlay
+          steps={availableCoachSteps}
+          stepIndex={Math.min(coachStep, availableCoachStepCount - 1)}
+          onNext={() =>
+            setCoachStep((prev) => Math.min(prev + 1, availableCoachStepCount - 1))
+          }
+          onPrev={() => setCoachStep((prev) => Math.max(prev - 1, 0))}
+          onSkip={() => handleCoachClose()}
+          onFinish={() => handleCoachClose()}
+        />
+      ) : null}
+
       {showDetails && scenarioResult ? (
         <div className="fixed inset-0 z-50 flex">
           <button
@@ -1391,12 +1499,184 @@ export function ScenarioPlanner() {
   );
 }
 
+type CoachOverlayProps = {
+  steps: CoachStepConfig[];
+  stepIndex: number;
+  onNext: () => void;
+  onPrev: () => void;
+  onSkip: () => void;
+  onFinish: () => void;
+};
+
+type HighlightRect = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
+function CoachOverlay({ steps, stepIndex, onNext, onPrev, onSkip, onFinish }: CoachOverlayProps) {
+  const step = steps[stepIndex];
+  const totalSteps = steps.length;
+  const [rect, setRect] = useState<HighlightRect | null>(null);
+  const [viewport, setViewport] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
+
+  useEffect(() => {
+    if (!step) {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const target = step.target.current;
+    if (!target) {
+      return;
+    }
+
+    const bounding = target.getBoundingClientRect();
+    const gutter = 96;
+    if (bounding.top < gutter || bounding.bottom > window.innerHeight - gutter) {
+      window.requestAnimationFrame(() => {
+        target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      });
+    }
+  }, [step]);
+
+  useLayoutEffect(() => {
+    if (!step) {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const updateRect = () => {
+      const target = step.target.current;
+      if (!target) {
+        setRect(null);
+        return;
+      }
+
+      const bounding = target.getBoundingClientRect();
+      setRect({
+        top: bounding.top,
+        left: bounding.left,
+        width: bounding.width,
+        height: bounding.height,
+      });
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+    };
+
+    updateRect();
+
+    window.addEventListener("resize", updateRect);
+    window.addEventListener("scroll", updateRect, true);
+
+    return () => {
+      window.removeEventListener("resize", updateRect);
+      window.removeEventListener("scroll", updateRect, true);
+    };
+  }, [step]);
+
+  if (!step || !rect || rect.width === 0 || rect.height === 0) {
+    return null;
+  }
+
+  const isFirst = stepIndex === 0;
+  const isLast = stepIndex === totalSteps - 1;
+  const padding = 12;
+  const highlightTop = Math.max(rect.top - padding, 8);
+  const highlightLeft = Math.max(rect.left - padding, 8);
+  const highlightWidth = Math.max(
+    40,
+    viewport.width
+      ? Math.min(rect.width + padding * 2, viewport.width - highlightLeft - 8)
+      : rect.width + padding * 2,
+  );
+  const highlightHeight = Math.max(
+    40,
+    viewport.height
+      ? Math.min(rect.height + padding * 2, viewport.height - highlightTop - 8)
+      : rect.height + padding * 2,
+  );
+  const cardMaxWidth = viewport.width ? Math.min(320, viewport.width - 32) : 320;
+  const highlightCenter = highlightLeft + highlightWidth / 2;
+  let cardLeft = highlightCenter - cardMaxWidth / 2;
+  cardLeft = Math.max(16, cardLeft);
+  if (viewport.width) {
+    cardLeft = Math.min(cardLeft, viewport.width - cardMaxWidth - 16);
+  }
+  const estimatedCardHeight = 220;
+  let cardTop = highlightTop + highlightHeight + 16;
+  if (viewport.height && cardTop + estimatedCardHeight > viewport.height - 16) {
+    cardTop = Math.max(highlightTop - (estimatedCardHeight + 16), 16);
+  }
+
+  const handleNext = () => {
+    if (isLast) {
+      onFinish();
+      return;
+    }
+    onNext();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true">
+      <div
+        className="pointer-events-none absolute rounded-xl border-2 border-cta shadow-[0_0_0_9999px_rgba(0,0,0,0.55)] transition-all duration-200"
+        style={{
+          top: highlightTop,
+          left: highlightLeft,
+          width: highlightWidth,
+          height: highlightHeight,
+        }}
+      />
+      <div
+        className="absolute flex max-w-xs flex-col gap-3 rounded-lg bg-background p-4 text-sm shadow-lg ring-1 ring-border"
+        style={{ top: cardTop, left: cardLeft, width: cardMaxWidth }}
+      >
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Step {stepIndex + 1} of {totalSteps}
+        </span>
+        <h3 className="text-base font-semibold text-foreground">{step.title}</h3>
+        <p className="text-sm text-muted-foreground">{step.description}</p>
+        <div className="flex flex-wrap justify-between gap-2 pt-1">
+          <Button type="button" variant="ghost" size="sm" onClick={onSkip}>
+            Skip tour
+          </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onPrev}
+              disabled={isFirst}
+            >
+              Back
+            </Button>
+            <Button type="button" size="sm" onClick={handleNext}>
+              {isLast ? "Finish" : "Next"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type ProgrammeStepProps = {
   control: Control<ScenarioInputSchema>;
   onSelectTier: (tier: TierKey) => void;
   selectedTier: TierKey;
   onSelectPreset: (preset: PresetKey) => void;
   selectedPreset: PresetKey;
+  highlightRef: RefObject<HTMLDivElement | null>;
 };
 
 function ProgrammeStep({
@@ -1405,9 +1685,10 @@ function ProgrammeStep({
   selectedTier,
   onSelectPreset,
   selectedPreset,
+  highlightRef,
 }: ProgrammeStepProps) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" ref={highlightRef}>
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
         <div className="flex-1 space-y-3">
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
