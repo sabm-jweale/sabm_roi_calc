@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     icon: [
       {
         rel: "icon",
-        url: "/img/favicon-32x32.webp",
+        url: "/favicon-32x32.webp",
         type: "image/webp",
         sizes: "32x32",
       },

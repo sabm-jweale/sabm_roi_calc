@@ -1,8 +1,23 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
-import { useForm, type Control, type FieldPath, type Resolver } from "react-hook-form";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type RefObject,
+  type ReactNode,
+} from "react";
+import {
+  useForm,
+  type Control,
+  type FieldNamesMarkedBoolean,
+  type FieldPath,
+  type Resolver,
+} from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Info } from "lucide-react";
 
@@ -26,6 +41,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { buildSensitivityGrid, calculateScenario } from "@/lib/calculator/calculator";
+import {
+  ALIGNMENT_MULTIPLIERS,
+  deriveCoverage,
+  deriveIntensity,
+} from "@/lib/calculator/capacity";
+import type { CapacityBottleneck } from "@/lib/calculator/capacity";
+import type { AlignmentLevel } from "@/lib/calculator/types";
 import {
   DEFAULT_SCENARIO,
   scenarioSchema,
@@ -73,6 +95,13 @@ type StepConfig = {
   description: string;
 };
 
+type CoachStepConfig = {
+  id: string;
+  title: string;
+  description: string;
+  target: RefObject<HTMLElement | null>;
+};
+
 const SETUP_STEPS: StepConfig[] = [
   {
     id: "programme",
@@ -97,26 +126,22 @@ const TIER_CONFIG: Record<
     label: string;
     helper: string;
     defaultAccounts: number;
-    defaultQualifiedOpps: number;
   }
 > = {
   oneToOne: {
     label: "Single Account (1:1)",
     helper: "High touch, 3-5 accounts. Expect deeper personalization.",
     defaultAccounts: 4,
-    defaultQualifiedOpps: 1.2,
   },
   oneToFew: {
     label: "Clustered (1:few)",
     helper: "Clustered pods, 10–25 accounts. Balanced scale vs depth.",
     defaultAccounts: 20,
-    defaultQualifiedOpps: 0.6,
   },
   oneToMany: {
     label: "Programmatic (1:many)",
     helper: "At-scale motions, 100+ accounts. Efficiency matters.",
     defaultAccounts: 100,
-    defaultQualifiedOpps: 0.4,
   },
 };
 
@@ -191,6 +216,18 @@ const TIER_CYCLE_REDUCTION: Record<
   oneToMany: { typical: 0.1, stretch: 0.2 },
 };
 
+const TEAM_HOURS_PER_ACCOUNT: Record<TierKey, number> = {
+  oneToOne: 32,
+  oneToFew: 12,
+  oneToMany: 3,
+};
+
+const BUDGET_PER_ACCOUNT_ESTIMATE: Record<TierKey, number> = {
+  oneToOne: 60000,
+  oneToFew: 23500,
+  oneToMany: 6000,
+};
+
 const setupValidationMap: Record<SetupStep, Array<FieldPath<ScenarioInputSchema>>> = {
   programme: ["programme.durationMonths"],
   market: [
@@ -200,6 +237,13 @@ const setupValidationMap: Record<SetupStep, Array<FieldPath<ScenarioInputSchema>
     "market.baselineAcv",
   ],
   budget: [
+    "capacity.source",
+    "capacity.marketingFte",
+    "capacity.salesFte",
+    "capacity.marketingUtilisation",
+    "capacity.salesUtilisation",
+    "capacity.hoursPerAccount",
+    "alignment.level",
     "costs.people",
     "costs.media",
     "costs.dataTech",
@@ -218,6 +262,7 @@ export function ScenarioPlanner() {
     defaultValues: DEFAULT_SCENARIO,
     mode: "onChange",
   });
+  const { dirtyFields } = form.formState;
 
   const [mode, setMode] = useState<Mode>("setup");
   const [setupStep, setSetupStep] = useState<SetupStep>("programme");
@@ -226,10 +271,17 @@ export function ScenarioPlanner() {
   const [cyclePreset, setCyclePreset] = useState<CyclePresetKey>("typical");
   const [cycleOverrideEnabled, setCycleOverrideEnabled] = useState(false);
   const [showCoach, setShowCoach] = useState(false);
+  const [coachStep, setCoachStep] = useState(0);
   const [showDetails, setShowDetails] = useState(false);
   const [inMarketAuto, setInMarketAuto] = useState(true);
   const [buyingWindowMonths, setBuyingWindowMonths] = useState(() => DEFAULT_BUYING_WINDOW_MONTHS[tier]);
   const [customBuyingWindow, setCustomBuyingWindow] = useState(false);
+  const [flatBudget, setFlatBudget] = useState(0);
+
+  const modeNavRef = useRef<HTMLDivElement | null>(null);
+  const setupStepsRef = useRef<HTMLDivElement | null>(null);
+  const presetRef = useRef<HTMLDivElement | null>(null);
+  const setupActionsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -238,15 +290,32 @@ export function ScenarioPlanner() {
 
     const seen = window.localStorage.getItem("sabm-roi-coach");
     if (!seen) {
+      setCoachStep(0);
       setShowCoach(true);
     }
   }, []);
 
-  const dismissCoach = () => {
-    setShowCoach(false);
+  const markCoachSeen = () => {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("sabm-roi-coach", "1");
     }
+  };
+
+  const handleCoachClose = (persistSeen = true) => {
+    setShowCoach(false);
+    setCoachStep(0);
+    if (persistSeen) {
+      markCoachSeen();
+    }
+  };
+
+  const launchCoach = () => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("sabm-roi-coach");
+    }
+    setMode("setup");
+    setCoachStep(0);
+    setShowCoach(true);
   };
 
   const watchedInputs = form.watch();
@@ -276,6 +345,7 @@ export function ScenarioPlanner() {
         inMarketRate: toNumber(watchedInputs.market?.inMarketRate),
         qualifiedOppsPerAccount: toNumber(
           watchedInputs.market?.qualifiedOppsPerAccount,
+          1,
         ),
         baselineWinRate: toNumber(watchedInputs.market?.baselineWinRate),
         baselineAcv: toNumber(watchedInputs.market?.baselineAcv),
@@ -299,6 +369,30 @@ export function ScenarioPlanner() {
         content: toNumber(watchedInputs.costs?.content),
         agency: toNumber(watchedInputs.costs?.agency),
         other: toNumber(watchedInputs.costs?.other),
+      },
+      capacity: {
+        source: watchedInputs.capacity?.source === "team" ? "team" : "budget",
+        marketingFte: toNumber(watchedInputs.capacity?.marketingFte),
+        salesFte: toNumber(watchedInputs.capacity?.salesFte),
+        marketingUtilisation: toNumber(
+          watchedInputs.capacity?.marketingUtilisation,
+          DEFAULT_SCENARIO.capacity.marketingUtilisation,
+        ),
+        salesUtilisation: toNumber(
+          watchedInputs.capacity?.salesUtilisation,
+          DEFAULT_SCENARIO.capacity.salesUtilisation,
+        ),
+        hoursPerAccount: toNumber(
+          watchedInputs.capacity?.hoursPerAccount,
+          DEFAULT_SCENARIO.capacity.hoursPerAccount,
+        ),
+      },
+      alignment: {
+        level:
+          watchedInputs.alignment?.level === "poor" ||
+          watchedInputs.alignment?.level === "excellent"
+            ? watchedInputs.alignment.level
+            : DEFAULT_SCENARIO.alignment.level,
       },
       sensitivity: {
         inMarketRange:
@@ -325,6 +419,62 @@ export function ScenarioPlanner() {
     sanitizedInputs.programme.durationMonths - sanitizedInputs.programme.rampMonths,
   );
 
+  const categoryTotal = useMemo(() => {
+    const costs = sanitizedInputs.costs;
+    return (
+      costs.people +
+      costs.media +
+      costs.dataTech +
+      costs.content +
+      costs.agency +
+      costs.other
+    );
+  }, [sanitizedInputs.costs]);
+
+  useEffect(() => {
+    if (categoryTotal > 0 && flatBudget !== 0) {
+      setFlatBudget(0);
+    }
+  }, [categoryTotal, flatBudget]);
+
+  const effectiveCosts = useMemo(() => {
+    if (categoryTotal > 0 || flatBudget <= 0) {
+      return sanitizedInputs.costs;
+    }
+
+    return {
+      ...sanitizedInputs.costs,
+      people: flatBudget,
+    } satisfies ScenarioInputSchema["costs"];
+  }, [sanitizedInputs.costs, categoryTotal, flatBudget]);
+
+  const totalCost = categoryTotal > 0 ? categoryTotal : flatBudget;
+
+  const budgetCapacityEstimate = useMemo(() => {
+    if (sanitizedInputs.capacity.source !== "budget") {
+      return undefined;
+    }
+
+    const perAccount = BUDGET_PER_ACCOUNT_ESTIMATE[tier];
+    if (!Number.isFinite(perAccount) || perAccount <= 0) {
+      return undefined;
+    }
+
+    const raw = Math.floor(totalCost / perAccount);
+    return Math.max(0, Math.min(5000, raw));
+  }, [sanitizedInputs.capacity.source, totalCost, tier]);
+
+  const capacityWithBudget = useMemo(() => {
+    if (sanitizedInputs.capacity.source === "budget") {
+      return {
+        ...sanitizedInputs.capacity,
+        budgetCapacityAccounts: budgetCapacityEstimate,
+      } satisfies ScenarioInputSchema["capacity"];
+    }
+
+    return sanitizedInputs.capacity;
+  }, [sanitizedInputs.capacity, budgetCapacityEstimate]);
+
   const derivedInMarketShare = useMemo(() => {
     return deriveInMarketPct({
       durationMonths: sanitizedInputs.programme.durationMonths,
@@ -340,9 +490,28 @@ export function ScenarioPlanner() {
 
   const derivedInMarketPercent = Math.round(Math.min(1, derivedInMarketShare) * 100);
   const cappedDerivedInMarketPercent = Math.min(70, derivedInMarketPercent);
-  const effectiveInMarketRate = inMarketAuto
+  const baseInMarketRate = inMarketAuto
     ? cappedDerivedInMarketPercent
     : sanitizedInputs.market.inMarketRate;
+
+  const marketForCoverage = {
+    ...sanitizedInputs.market,
+    inMarketRate: baseInMarketRate,
+  };
+
+  const coverageSummary = deriveCoverage(marketForCoverage, capacityWithBudget);
+  const coveragePercent = Math.max(0, Math.round(coverageSummary.coverageRate * 100));
+  const alignmentMultipliers = ALIGNMENT_MULTIPLIERS[sanitizedInputs.alignment.level];
+  const { opportunity: alignmentOpportunity, win: alignmentWin, velocity: alignmentVelocity } =
+    alignmentMultipliers;
+  const alignmentLabel =
+    sanitizedInputs.alignment.level === "poor"
+      ? "Poor"
+      : sanitizedInputs.alignment.level === "excellent"
+        ? "Excellent"
+        : "Standard";
+  const coverageIntensity = deriveIntensity(coverageSummary.coverageRate);
+  const alignmentEffectsText = `Opp ×${alignmentOpportunity.toFixed(2)}, Win ×${alignmentWin.toFixed(2)}, Velocity ×${alignmentVelocity.toFixed(2)}`;
 
   useEffect(() => {
     if (!inMarketAuto) {
@@ -404,14 +573,6 @@ export function ScenarioPlanner() {
       shouldValidate: true,
       shouldDirty: true,
     });
-    form.setValue(
-      "market.qualifiedOppsPerAccount",
-      tierDefaults.defaultQualifiedOpps,
-      {
-        shouldValidate: true,
-        shouldDirty: true,
-      },
-    );
   }, [tier, form]);
 
   useEffect(() => {
@@ -448,15 +609,81 @@ export function ScenarioPlanner() {
     setBuyingWindowMonths(DEFAULT_BUYING_WINDOW_MONTHS[tier]);
   }, [tier, inMarketAuto, customBuyingWindow]);
 
+  useEffect(() => {
+    const capacityDirty = dirtyFields.capacity as
+      | FieldNamesMarkedBoolean<ScenarioInputSchema["capacity"]>
+      | undefined;
+    if (capacityDirty?.hoursPerAccount) {
+      return;
+    }
+
+    const defaultHours = TEAM_HOURS_PER_ACCOUNT[tier];
+    const current = Number(form.getValues("capacity.hoursPerAccount"));
+
+    if (!Number.isFinite(current) || Math.abs(current - defaultHours) > 0.5) {
+      form.setValue("capacity.hoursPerAccount", defaultHours, {
+        shouldValidate: true,
+        shouldDirty: false,
+      });
+    }
+  }, [tier, form, dirtyFields.capacity?.hoursPerAccount]);
+
+  useEffect(() => {
+    const teamWarnings: Array<{
+      name: FieldPath<ScenarioInputSchema>;
+      condition: boolean;
+      message: string;
+    }> = [
+      {
+        name: "capacity.marketingUtilisation",
+        condition:
+          sanitizedInputs.capacity.source === "team" &&
+          Number.isFinite(sanitizedInputs.capacity.marketingUtilisation) &&
+          sanitizedInputs.capacity.marketingUtilisation < 20,
+        message: "Very low availability will restrict coverage.",
+      },
+      {
+        name: "capacity.salesUtilisation",
+        condition:
+          sanitizedInputs.capacity.source === "team" &&
+          Number.isFinite(sanitizedInputs.capacity.salesUtilisation) &&
+          sanitizedInputs.capacity.salesUtilisation < 20,
+        message: "Very low availability will restrict coverage.",
+      },
+      {
+        name: "capacity.hoursPerAccount",
+        condition:
+          sanitizedInputs.capacity.source === "team" &&
+          Number.isFinite(sanitizedInputs.capacity.hoursPerAccount) &&
+          sanitizedInputs.capacity.hoursPerAccount < TEAM_HOURS_PER_ACCOUNT[tier],
+        message: "Below typical effort—expect reduced quality.",
+      },
+    ];
+
+    teamWarnings.forEach(({ name, condition, message }) => {
+      const fieldState = form.getFieldState(name);
+      const hasManualWarning =
+        fieldState.error?.type === "manual" && fieldState.error.message === message;
+
+      if (condition && !hasManualWarning) {
+        form.setError(name, { type: "manual", message });
+      } else if (!condition && hasManualWarning) {
+        form.clearErrors(name);
+      }
+    });
+  }, [form, sanitizedInputs.capacity, tier]);
+
   const scenarioInputs = useMemo<ScenarioInputSchema>(() => {
     return {
       ...sanitizedInputs,
+      costs: effectiveCosts,
+      capacity: capacityWithBudget,
       market: {
         ...sanitizedInputs.market,
-        inMarketRate: effectiveInMarketRate,
+        inMarketRate: baseInMarketRate,
       },
     };
-  }, [sanitizedInputs, effectiveInMarketRate]);
+  }, [sanitizedInputs, effectiveCosts, capacityWithBudget, baseInMarketRate]);
 
   const scenarioResult = useMemo(() => {
     const parsed = scenarioSchema.safeParse(scenarioInputs);
@@ -500,49 +727,43 @@ export function ScenarioPlanner() {
     fractionDigits = 1,
   ) => formatPercentIntl(value, locale, { fractionDigits });
 
-  const totalCost = useMemo(() => {
-    const costs = sanitizedInputs.costs;
-    return (
-      costs.people +
-      costs.media +
-      costs.dataTech +
-      costs.content +
-      costs.agency +
-      costs.other
-    );
-  }, [sanitizedInputs.costs]);
+  const treatedAccounts = coverageSummary.treatedAccounts;
+  const requestedAccounts = coverageSummary.requestedAccounts;
+  const teamCapacityAccounts = coverageSummary.teamCapacityAccounts;
+  const capacityBottleneck = coverageSummary.bottleneck;
+  const capacityBottleneckCopy =
+    capacityBottleneck === "balanced"
+      ? "Balanced load across marketing and sales."
+      : capacityBottleneck === "marketing"
+        ? "Marketing is the current bottleneck."
+        : "Sales is the current bottleneck.";
+  const shortfallAccounts = Math.max(0, requestedAccounts - treatedAccounts);
+  const requestRatePercent = sanitizedInputs.market.targetAccounts > 0
+    ? Math.max(0, Math.round((requestedAccounts / sanitizedInputs.market.targetAccounts) * 100))
+    : 0;
 
-  const treatedAccounts = useMemo(() => {
-    const accounts = sanitizedInputs.market.targetAccounts;
-    const inMarketShare = effectiveInMarketRate / 100;
-    return Math.round(accounts * inMarketShare);
-  }, [sanitizedInputs.market.targetAccounts, effectiveInMarketRate]);
+  const coverageShare = coverageSummary.coverageRate;
 
   const intensityMultiplier = useMemo(() => {
     const opportunityLift = sanitizedInputs.uplifts.opportunityRateUplift / 100;
     const winLift = sanitizedInputs.uplifts.winRateUplift / 100;
-    const treatedShare = effectiveInMarketRate / 100;
-    const base = treatedShare * (1 + opportunityLift / 2 + winLift / 4);
+    const base = coverageShare * (
+      1 +
+      (opportunityLift * alignmentOpportunity) / 2 +
+      (winLift * alignmentWin) / 4
+    );
     return Number.isFinite(base) ? Math.max(0, base) : 0;
   }, [
-    effectiveInMarketRate,
+    coverageShare,
     sanitizedInputs.uplifts.opportunityRateUplift,
     sanitizedInputs.uplifts.winRateUplift,
+    alignmentOpportunity,
+    alignmentWin,
   ]);
 
   const dilutionRisk = intensityMultiplier > 0.75 && sanitizedInputs.market.targetAccounts > 120;
 
-  const coverageShare = useMemo(() => {
-    return Math.min(1, Math.max(0, effectiveInMarketRate / 100));
-  }, [effectiveInMarketRate]);
-
-  const cycleIntensity = useMemo(() => {
-    if (coverageShare <= 0) {
-      return 0;
-    }
-
-    return Math.pow(coverageShare, 0.8);
-  }, [coverageShare]);
+  const cycleIntensity = coverageIntensity;
 
   const derivedSalesCycle = useMemo(() => {
     const baseline = sanitizedInputs.market.salesCycleMonthsBaseline;
@@ -551,11 +772,17 @@ export function ScenarioPlanner() {
     }
 
     const reductionBase = TIER_CYCLE_REDUCTION[tier][cyclePreset];
-    const reduction = reductionBase * Math.min(1, Math.max(0, cycleIntensity));
+    const reduction = reductionBase * Math.min(1, Math.max(0, cycleIntensity * alignmentVelocity));
     const derived = baseline * (1 - reduction);
     const clamped = Math.max(1, Math.min(baseline, derived));
     return Number.isFinite(clamped) ? Number(clamped.toFixed(1)) : baseline;
-  }, [cycleIntensity, cyclePreset, sanitizedInputs.market.salesCycleMonthsBaseline, tier]);
+  }, [
+    cycleIntensity,
+    cyclePreset,
+    sanitizedInputs.market.salesCycleMonthsBaseline,
+    tier,
+    alignmentVelocity,
+  ]);
 
   const cycleReductionPercent = useMemo(() => {
     const baseline = sanitizedInputs.market.salesCycleMonthsBaseline;
@@ -603,45 +830,16 @@ export function ScenarioPlanner() {
       return;
     }
 
+    setFlatBudget(value);
+
     const current = form.getValues("costs");
-    const currentTotal =
-      current.people +
-      current.media +
-      current.dataTech +
-      current.content +
-      current.agency +
-      current.other;
-
-    if (currentTotal <= 0) {
-      form.setValue("costs.people", value, { shouldDirty: true, shouldValidate: true });
-      form.setValue("costs.media", 0, { shouldDirty: true, shouldValidate: true });
-      form.setValue("costs.dataTech", 0, { shouldDirty: true, shouldValidate: true });
-      form.setValue("costs.content", 0, { shouldDirty: true, shouldValidate: true });
-      form.setValue("costs.agency", 0, { shouldDirty: true, shouldValidate: true });
-      form.setValue("costs.other", 0, { shouldDirty: true, shouldValidate: true });
-      return;
-    }
-
-    const ratio = value / currentTotal;
-    const keys = Object.keys(current) as Array<keyof typeof current>;
-    const next: Partial<typeof current> = {};
-    let runningTotal = 0;
-
-    keys.forEach((key, index) => {
-      let scaled = Math.max(0, Math.round(current[key] * ratio));
-      if (index === keys.length - 1) {
-        const diff = value - (runningTotal + scaled);
-        scaled = Math.max(0, scaled + diff);
+    (Object.keys(current) as Array<keyof typeof current>).forEach((key) => {
+      if (current[key] !== 0) {
+        form.setValue(`costs.${key}` as const, 0, {
+          shouldDirty: true,
+          shouldValidate: true,
+        });
       }
-      runningTotal += scaled;
-      next[key] = scaled;
-    });
-
-    keys.forEach((key) => {
-      form.setValue(`costs.${key}` as const, next[key] ?? 0, {
-        shouldDirty: true,
-        shouldValidate: true,
-      });
     });
   };
 
@@ -690,6 +888,59 @@ export function ScenarioPlanner() {
 
   const setupComplete = scenarioResult !== null;
 
+  const coachSteps = useMemo<CoachStepConfig[]>(
+    () => [
+      {
+        id: "mode-nav",
+        title: "Follow the journey",
+        description:
+          "Switch between setup, tune, and present to move from assumptions to a board-ready pitch.",
+        target: modeNavRef,
+      },
+      {
+        id: "setup-steps",
+        title: "Work through the milestones",
+        description:
+          "Programme, market, and budget are the key inputs. Each card holds the essentials with advanced controls tucked away.",
+        target: setupStepsRef,
+      },
+      {
+        id: "presets",
+        title: "Lean on presets",
+        description:
+          "Tier and quick presets give you sensible defaults. Start here, then fine-tune the numbers that matter most to your plan.",
+        target: presetRef,
+      },
+      {
+        id: "setup-actions",
+        title: "Advance when you’re ready",
+        description:
+          "Use continue to validate a step or jump to tune when the baseline looks good. You can always return here.",
+        target: setupActionsRef,
+      },
+    ],
+    [],
+  );
+
+  const availableCoachSteps = coachSteps.filter((step) => step.target.current);
+  const availableCoachStepCount = availableCoachSteps.length;
+
+  useEffect(() => {
+    if (!showCoach) {
+      return;
+    }
+
+    if (availableCoachStepCount === 0) {
+      setShowCoach(false);
+      setCoachStep(0);
+      return;
+    }
+
+    if (coachStep > availableCoachStepCount - 1) {
+      setCoachStep(availableCoachStepCount - 1);
+    }
+  }, [showCoach, availableCoachStepCount, coachStep]);
+
   return (
     <TooltipProvider delayDuration={200}>
       <Form {...form}>
@@ -698,7 +949,7 @@ export function ScenarioPlanner() {
             <header className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
               <div className="space-y-3">
                 <Image
-                  src="/img/strategicabm_logoforwhitebg_web.jpg"
+                  src="/strategicabm_logoforwhitebg_web.jpg"
                   alt="strategicabm wordmark"
                   width={240}
                   height={60}
@@ -714,16 +965,29 @@ export function ScenarioPlanner() {
                   </p>
                 </div>
               </div>
-              <Button
-                size="lg"
-                className="self-start bg-cta text-white hover:bg-cta/90"
-                disabled={!setupComplete}
-              >
-                Export (coming soon)
-              </Button>
+              <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={launchCoach}
+                  disabled={showCoach}
+                >
+                  Guided tour
+                </Button>
+                <Button
+                  size="lg"
+                  className="self-start bg-cta text-white hover:bg-cta/90"
+                  disabled={!setupComplete}
+                >
+                  Export (coming soon)
+                </Button>
+              </div>
             </header>
 
-            <nav className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-2 text-sm font-medium">
+            <nav
+              ref={modeNavRef}
+              className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-2 text-sm font-medium"
+            >
               {(["setup", "tune", "present"] as Mode[]).map((tab) => (
                 <button
                   key={tab}
@@ -742,26 +1006,12 @@ export function ScenarioPlanner() {
 
             {mode === "setup" ? (
               <section className="space-y-6">
-                {showCoach ? (
-                  <Card className="border-dashed bg-muted/40">
-                    <CardContent className="space-y-3 pt-6 text-sm text-muted-foreground">
-                      <p>
-                        Welcome in. You&apos;ll glide through three short steps. We&apos;ll only ask for the essentials now; deeper controls live under Advanced.
-                      </p>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <Button size="sm" onClick={dismissCoach}>
-                          Let&apos;s start
-                        </Button>
-                        <p className="text-xs text-muted-foreground/80">
-                          We&apos;ll remember this on next visit.
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ) : null}
 
                 <div className="flex flex-col gap-4">
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div
+                    ref={setupStepsRef}
+                    className="flex flex-wrap items-center gap-3"
+                  >
                     {SETUP_STEPS.map((step, index) => {
                       const active = setupStep === step.id;
                       const completed = SETUP_STEPS.findIndex((s) => s.id === setupStep) > index;
@@ -811,6 +1061,7 @@ export function ScenarioPlanner() {
                           selectedTier={tier}
                           onSelectPreset={setPreset}
                           selectedPreset={preset}
+                          highlightRef={presetRef}
                         />
                       ) : null}
 
@@ -827,7 +1078,7 @@ export function ScenarioPlanner() {
                           onResetBuyingWindow={handleResetBuyingWindow}
                           hasCustomBuyingWindow={customBuyingWindow}
                           onManualChange={handleManualInMarketChange}
-                          currentValue={effectiveInMarketRate}
+                          currentValue={baseInMarketRate}
                         />
                       ) : null}
 
@@ -836,10 +1087,26 @@ export function ScenarioPlanner() {
                           control={form.control}
                           totalCost={totalCost}
                           onTotalCostChange={handleTotalCostChange}
+                          capacitySummary={{
+                            source: sanitizedInputs.capacity.source,
+                            treatedAccounts,
+                            requestedAccounts,
+                            teamCapacityAccounts,
+                            budgetCapacityAccounts: coverageSummary.budgetCapacityAccounts,
+                            coveragePercent,
+                            bottleneck: capacityBottleneck,
+                            totalTargets: sanitizedInputs.market.targetAccounts,
+                            baseRequestRate: baseInMarketRate,
+                          }}
+                          alignmentLevel={sanitizedInputs.alignment.level}
+                          locale={locale}
                         />
                       ) : null}
 
-                      <div className="flex items-center justify-between">
+                      <div
+                        ref={setupActionsRef}
+                        className="flex items-center justify-between"
+                      >
                         <Button
                           type="button"
                           variant="ghost"
@@ -936,7 +1203,7 @@ export function ScenarioPlanner() {
                         onResetBuyingWindow={handleResetBuyingWindow}
                         hasCustomBuyingWindow={customBuyingWindow}
                         onManualChange={handleManualInMarketChange}
-                        currentValue={effectiveInMarketRate}
+                        currentValue={baseInMarketRate}
                         manualDescription="Anchor this to intent data or historical opportunity scans."
                       />
                     </CardContent>
@@ -959,7 +1226,7 @@ export function ScenarioPlanner() {
                         <CoverageMetric
                           label="Treated accounts"
                           value={`${treatedAccounts}`}
-                          helper={`of ${sanitizedInputs.market.targetAccounts} target accounts`}
+                          helper={`${coveragePercent}% of ${sanitizedInputs.market.targetAccounts} target accounts`}
                         />
                         <CoverageMetric
                           label="Intensity multiplier"
@@ -973,12 +1240,13 @@ export function ScenarioPlanner() {
                         />
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        {totalCost > 0
-                          ? `At current budget you can fully treat ${Math.max(
-                              1,
-                              Math.round(treatedAccounts * (intensityMultiplier || 0.1)),
-                            )} accounts with an effective uplift of ${(intensityMultiplier * 100).toFixed(0)}%.`
-                          : "Add investment numbers to size feasible coverage."}
+                        {sanitizedInputs.capacity.source === "team"
+                          ? shortfallAccounts > 0
+                            ? `Team-led cap: ${treatedAccounts} of ${requestedAccounts} requested accounts (${coveragePercent}% coverage). ${capacityBottleneckCopy}`
+                            : `Team-led coverage holds at ${treatedAccounts} accounts (${coveragePercent}% of the list). ${alignmentLabel} alignment applies ${alignmentEffectsText}.`
+                          : totalCost > 0
+                            ? `Budget-led coverage assumes ${requestedAccounts} accounts (${requestRatePercent}% of the list). Alignment ${alignmentLabel} applies ${alignmentEffectsText}.`
+                            : "Add investment numbers to size feasible coverage."}
                       </p>
                     </CardContent>
                   </Card>
@@ -1237,6 +1505,19 @@ export function ScenarioPlanner() {
         </form>
       </Form>
 
+      {showCoach && availableCoachStepCount > 0 ? (
+        <CoachOverlay
+          steps={availableCoachSteps}
+          stepIndex={Math.min(coachStep, availableCoachStepCount - 1)}
+          onNext={() =>
+            setCoachStep((prev) => Math.min(prev + 1, availableCoachStepCount - 1))
+          }
+          onPrev={() => setCoachStep((prev) => Math.max(prev - 1, 0))}
+          onSkip={() => handleCoachClose()}
+          onFinish={() => handleCoachClose()}
+        />
+      ) : null}
+
       {showDetails && scenarioResult ? (
         <div className="fixed inset-0 z-50 flex">
           <button
@@ -1391,12 +1672,184 @@ export function ScenarioPlanner() {
   );
 }
 
+type CoachOverlayProps = {
+  steps: CoachStepConfig[];
+  stepIndex: number;
+  onNext: () => void;
+  onPrev: () => void;
+  onSkip: () => void;
+  onFinish: () => void;
+};
+
+type HighlightRect = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
+function CoachOverlay({ steps, stepIndex, onNext, onPrev, onSkip, onFinish }: CoachOverlayProps) {
+  const step = steps[stepIndex];
+  const totalSteps = steps.length;
+  const [rect, setRect] = useState<HighlightRect | null>(null);
+  const [viewport, setViewport] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
+
+  useEffect(() => {
+    if (!step) {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const target = step.target.current;
+    if (!target) {
+      return;
+    }
+
+    const bounding = target.getBoundingClientRect();
+    const gutter = 96;
+    if (bounding.top < gutter || bounding.bottom > window.innerHeight - gutter) {
+      window.requestAnimationFrame(() => {
+        target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      });
+    }
+  }, [step]);
+
+  useLayoutEffect(() => {
+    if (!step) {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const updateRect = () => {
+      const target = step.target.current;
+      if (!target) {
+        setRect(null);
+        return;
+      }
+
+      const bounding = target.getBoundingClientRect();
+      setRect({
+        top: bounding.top,
+        left: bounding.left,
+        width: bounding.width,
+        height: bounding.height,
+      });
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+    };
+
+    updateRect();
+
+    window.addEventListener("resize", updateRect);
+    window.addEventListener("scroll", updateRect, true);
+
+    return () => {
+      window.removeEventListener("resize", updateRect);
+      window.removeEventListener("scroll", updateRect, true);
+    };
+  }, [step]);
+
+  if (!step || !rect || rect.width === 0 || rect.height === 0) {
+    return null;
+  }
+
+  const isFirst = stepIndex === 0;
+  const isLast = stepIndex === totalSteps - 1;
+  const padding = 12;
+  const highlightTop = Math.max(rect.top - padding, 8);
+  const highlightLeft = Math.max(rect.left - padding, 8);
+  const highlightWidth = Math.max(
+    40,
+    viewport.width
+      ? Math.min(rect.width + padding * 2, viewport.width - highlightLeft - 8)
+      : rect.width + padding * 2,
+  );
+  const highlightHeight = Math.max(
+    40,
+    viewport.height
+      ? Math.min(rect.height + padding * 2, viewport.height - highlightTop - 8)
+      : rect.height + padding * 2,
+  );
+  const cardMaxWidth = viewport.width ? Math.min(320, viewport.width - 32) : 320;
+  const highlightCenter = highlightLeft + highlightWidth / 2;
+  let cardLeft = highlightCenter - cardMaxWidth / 2;
+  cardLeft = Math.max(16, cardLeft);
+  if (viewport.width) {
+    cardLeft = Math.min(cardLeft, viewport.width - cardMaxWidth - 16);
+  }
+  const estimatedCardHeight = 220;
+  let cardTop = highlightTop + highlightHeight + 16;
+  if (viewport.height && cardTop + estimatedCardHeight > viewport.height - 16) {
+    cardTop = Math.max(highlightTop - (estimatedCardHeight + 16), 16);
+  }
+
+  const handleNext = () => {
+    if (isLast) {
+      onFinish();
+      return;
+    }
+    onNext();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true">
+      <div
+        className="pointer-events-none absolute rounded-xl border-2 border-cta shadow-[0_0_0_9999px_rgba(0,0,0,0.55)] transition-all duration-200"
+        style={{
+          top: highlightTop,
+          left: highlightLeft,
+          width: highlightWidth,
+          height: highlightHeight,
+        }}
+      />
+      <div
+        className="absolute flex max-w-xs flex-col gap-3 rounded-lg bg-background p-4 text-sm shadow-lg ring-1 ring-border"
+        style={{ top: cardTop, left: cardLeft, width: cardMaxWidth }}
+      >
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Step {stepIndex + 1} of {totalSteps}
+        </span>
+        <h3 className="text-base font-semibold text-foreground">{step.title}</h3>
+        <p className="text-sm text-muted-foreground">{step.description}</p>
+        <div className="flex flex-wrap justify-between gap-2 pt-1">
+          <Button type="button" variant="ghost" size="sm" onClick={onSkip}>
+            Skip tour
+          </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onPrev}
+              disabled={isFirst}
+            >
+              Back
+            </Button>
+            <Button type="button" size="sm" onClick={handleNext}>
+              {isLast ? "Finish" : "Next"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type ProgrammeStepProps = {
   control: Control<ScenarioInputSchema>;
   onSelectTier: (tier: TierKey) => void;
   selectedTier: TierKey;
   onSelectPreset: (preset: PresetKey) => void;
   selectedPreset: PresetKey;
+  highlightRef: RefObject<HTMLDivElement | null>;
 };
 
 function ProgrammeStep({
@@ -1405,9 +1858,10 @@ function ProgrammeStep({
   selectedTier,
   onSelectPreset,
   selectedPreset,
+  highlightRef,
 }: ProgrammeStepProps) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" ref={highlightRef}>
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
         <div className="flex-1 space-y-3">
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1656,16 +2110,113 @@ function MarketStep({
   );
 }
 
+type BudgetCapacitySummary = {
+  source: "budget" | "team";
+  treatedAccounts: number;
+  requestedAccounts: number;
+  teamCapacityAccounts: number;
+  budgetCapacityAccounts: number | null;
+  coveragePercent: number;
+  bottleneck: CapacityBottleneck;
+  totalTargets: number;
+  baseRequestRate: number;
+};
+
 type BudgetStepProps = {
   control: Control<ScenarioInputSchema>;
   totalCost: number;
   onTotalCostChange: (value: number) => void;
+  capacitySummary: BudgetCapacitySummary;
+  alignmentLevel: AlignmentLevel;
+  locale: string;
 };
 
-function BudgetStep({ control, totalCost, onTotalCostChange }: BudgetStepProps) {
+function BudgetStep({
+  control,
+  totalCost,
+  onTotalCostChange,
+  capacitySummary,
+  alignmentLevel,
+  locale,
+}: BudgetStepProps) {
+  const {
+    source,
+    treatedAccounts,
+    requestedAccounts,
+    budgetCapacityAccounts,
+    coveragePercent,
+    bottleneck,
+    totalTargets,
+    baseRequestRate,
+  } = capacitySummary;
+  const shortfall = Math.max(0, requestedAccounts - treatedAccounts);
+  const requestRateLabel = Math.max(0, Math.round(baseRequestRate));
+  const coverageLabel = Math.max(0, Math.round(coveragePercent));
+  const alignmentDescriptions: Record<AlignmentLevel, string> = {
+    poor: "Teams work in silos—follow-up slows and uplifts dip.",
+    standard: "Shared rhythms with a few gaps. Reliable default for most plans.",
+    excellent: "Joint planning and fast follow-up boost wins and speed.",
+  };
+  const alignmentMultipliers = ALIGNMENT_MULTIPLIERS[alignmentLevel];
+  const formatInt = (value: number) =>
+    new Intl.NumberFormat(locale, {
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    }).format(Math.max(0, Math.round(value)));
+  const targetListCount = Math.max(0, Math.round(totalTargets));
+  const expectedInMarket = Math.max(0, requestedAccounts);
+  const rawBudgetCapacity = Math.max(0, Math.round(budgetCapacityAccounts ?? targetListCount));
+  const effectiveBudgetCapacity = targetListCount > 0
+    ? Math.min(rawBudgetCapacity, targetListCount)
+    : rawBudgetCapacity;
+  const overflowBudget = targetListCount > 0 && rawBudgetCapacity > targetListCount;
+  const inMarketBadge = `≈${formatInt(expectedInMarket)}`;
+  const budgetCapacityBadge = targetListCount > 0
+    ? overflowBudget
+      ? `${formatInt(targetListCount)}+`
+      : `≈${formatInt(effectiveBudgetCapacity)}`
+    : `≈${formatInt(rawBudgetCapacity)}`;
+  const budgetHeadroom = effectiveBudgetCapacity - expectedInMarket;
+  let budgetVerdict = "";
+  let budgetVerdictLabel = "";
+  let budgetVerdictVariant: "default" | "secondary" | "destructive" | "outline" = "outline";
+  let budgetTooltip = "";
+
+  if (targetListCount <= 0) {
+    budgetVerdict = "Add a positive target list to estimate coverage.";
+    budgetVerdictLabel = "Need inputs";
+    budgetVerdictVariant = "outline";
+    budgetTooltip = "We need a non-zero target account list before we can estimate demand vs capacity.";
+  } else if (expectedInMarket <= 0) {
+    budgetVerdict = "No accounts are expected to be in-market this period, so your budget has full headroom.";
+    budgetVerdictLabel = "Full headroom";
+    budgetVerdictVariant = "secondary";
+    budgetTooltip = "In-market accounts drive demand. With none expected, the full budget remains headroom.";
+  } else if (budgetHeadroom > 0) {
+    if (overflowBudget) {
+      budgetVerdict = `Your budget covers the entire ${formatInt(targetListCount)}-account list at full intensity, leaving headroom to treat ≈${formatInt(budgetHeadroom)} more accounts than expected in-market.`;
+      budgetTooltip = "We convert spend to capacity using tier defaults (≈£60k/£23.5k/£6k per account). Your spend exceeds even the full list size.";
+    } else {
+      budgetVerdict = `Your budget covers all ≈${formatInt(expectedInMarket)} expected in-market accounts at full intensity (headroom ≈${formatInt(budgetHeadroom)}).`;
+      budgetTooltip = "Headroom = budget capacity minus expected in-market accounts. Capacity uses your tier’s spend-per-account benchmark.";
+    }
+    budgetVerdictLabel = "Headroom";
+    budgetVerdictVariant = "secondary";
+  } else if (budgetHeadroom === 0) {
+    budgetVerdict = `Your budget roughly matches the ≈${formatInt(expectedInMarket)} in-market accounts expected this plan.`;
+    budgetVerdictLabel = "At limit";
+    budgetVerdictVariant = "default";
+    budgetTooltip = "Capacity is roughly equal to demand. Consider adding buffer if you expect more accounts to activate.";
+  } else {
+    budgetVerdict = `Your budget covers ≈${formatInt(effectiveBudgetCapacity)} of ≈${formatInt(expectedInMarket)} in-market accounts—shortfall ≈${formatInt(-budgetHeadroom)}.`;
+    budgetVerdictLabel = "Shortfall";
+    budgetVerdictVariant = "destructive";
+    budgetTooltip = "Shortfall = demand minus capacity. Increase spend or lower scope to lift capacity.";
+  }
+
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
         <div>
           <label className="mb-2 block text-sm font-medium text-foreground">
             Total programme investment
@@ -1677,64 +2228,238 @@ function BudgetStep({ control, totalCost, onTotalCostChange }: BudgetStepProps) 
             className="text-base"
           />
           <p className="mt-1 text-xs text-muted-foreground">
-            Enter the blended annual budget. You can split it out in Advanced.
+            Enter the blended annual budget. Split it out if you want more detail.
           </p>
         </div>
-        <NumberField
-          control={control}
-          name="market.qualifiedOppsPerAccount"
-          label="Qualified opps per in-market account"
-          hint="Keeps the delivery team honest on capacity."
-          sublabel="Historic SQOs per in-market account you can support."
-        />
+
+        <AdvancedBlock title="Break down the budget (optional)">
+          <div className="grid gap-6 sm:grid-cols-2">
+            <NumberField
+              control={control}
+              name="costs.people"
+              label="People"
+              prefix="£"
+              hint="Internal headcount cost attributed to the programme."
+            />
+            <NumberField
+              control={control}
+              name="costs.media"
+              label="Media"
+              prefix="£"
+              hint="Paid media budget dedicated to ABM tactics."
+            />
+            <NumberField
+              control={control}
+              name="costs.dataTech"
+              label="Data & tech"
+              prefix="£"
+              hint="Platforms, intent data, enrichment, and tooling costs."
+            />
+            <NumberField
+              control={control}
+              name="costs.content"
+              label="Content"
+              prefix="£"
+              hint="Content creation, personalization, and asset production spend."
+            />
+            <NumberField
+              control={control}
+              name="costs.agency"
+              label="Agency & partners"
+              prefix="£"
+              hint="External partner and agency fees supporting the programme."
+            />
+            <NumberField
+              control={control}
+              name="costs.other"
+              label="Other"
+              prefix="£"
+              hint="Any additional investments not captured above."
+            />
+          </div>
+        </AdvancedBlock>
       </div>
 
-      <AdvancedBlock title="Cost breakdown (advanced)">
-        <div className="grid gap-6 sm:grid-cols-2">
-          <NumberField
+      <div className="space-y-4 rounded-lg border border-dashed bg-muted/20 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Capacity cap
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Limit coverage by budget or team time.
+            </p>
+          </div>
+          <FormField
             control={control}
-            name="costs.people"
-            label="People"
-            prefix="£"
-            hint="Internal headcount cost attributed to the programme."
-          />
-          <NumberField
-            control={control}
-            name="costs.media"
-            label="Media"
-            prefix="£"
-            hint="Paid media budget dedicated to ABM tactics."
-          />
-          <NumberField
-            control={control}
-            name="costs.dataTech"
-            label="Data & tech"
-            prefix="£"
-            hint="Platforms, intent data, enrichment, and tooling costs."
-          />
-          <NumberField
-            control={control}
-            name="costs.content"
-            label="Content"
-            prefix="£"
-            hint="Content creation, personalization, and asset production spend."
-          />
-          <NumberField
-            control={control}
-            name="costs.agency"
-            label="Agency & partners"
-            prefix="£"
-            hint="External partner and agency fees supporting the programme."
-          />
-          <NumberField
-            control={control}
-            name="costs.other"
-            label="Other"
-            prefix="£"
-            hint="Any additional investments not captured above."
+            name="capacity.source"
+            render={({ field }) => (
+              <FormItem className="w-full max-w-[220px] space-y-1">
+                <FormLabel>Cap coverage by</FormLabel>
+                <FormControl>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Cap coverage by" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="budget">Budget</SelectItem>
+                      <SelectItem value="team">Team time</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </FormControl>
+              </FormItem>
+            )}
           />
         </div>
-      </AdvancedBlock>
+        {source === "budget" ? (
+          <div className="rounded-md border bg-background/60 p-3 text-xs text-muted-foreground">
+            <p className="mb-2">
+              Team capacity is optional when you cap by budget. Switch to
+              {" "}&ldquo;Team time&rdquo; if bandwidth is the constraint.
+            </p>
+            {totalTargets > 0 ? (
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Badge variant="outline">Target list: {formatInt(totalTargets)}</Badge>
+                <Badge variant="outline">In-market this plan: {inMarketBadge}</Badge>
+                <Badge variant="outline">Budget capacity: {budgetCapacityBadge}</Badge>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge variant={budgetVerdictVariant} className="flex cursor-default items-center gap-1">
+                      {budgetVerdictLabel}
+                      {budgetTooltip ? <Info className="h-3 w-3" aria-hidden /> : null}
+                    </Badge>
+                  </TooltipTrigger>
+                  {budgetTooltip ? (
+                    <TooltipContent side="top" align="center" className="max-w-xs text-xs">
+                      {budgetTooltip}
+                    </TooltipContent>
+                  ) : null}
+                </Tooltip>
+              </div>
+            ) : null}
+            <p>{budgetVerdict}</p>
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <NumberField
+                control={control}
+                name="capacity.marketingFte"
+                label="Marketers (FTE)"
+                hint="Count part-timers as fractions, e.g. 1.5 = one full-time + one half-time."
+                sublabel="Full-time equivalents on this plan (fractions allowed)."
+              />
+              <NumberField
+                control={control}
+                name="capacity.salesFte"
+                label="Sellers (FTE)"
+                hint="Count part-timers as fractions if sellers split coverage."
+                sublabel="Reps covering treated accounts."
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <NumberField
+                control={control}
+                name="capacity.marketingUtilisation"
+                label="Marketing time available (%)"
+                suffix="%"
+                hint="Consider other projects, holidays, and meetings. 70% is a common ceiling."
+                sublabel="Share of each marketer’s time for this plan."
+              />
+              <NumberField
+                control={control}
+                name="capacity.salesUtilisation"
+                label="Sales time available (%)"
+                suffix="%"
+                hint="Use a lower value if reps carry a full quota. 50% is typical."
+                sublabel="Share of each seller’s time for this plan."
+              />
+            </div>
+
+            <AdvancedBlock title="Advanced (team time)">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <NumberField
+                  control={control}
+                  name="capacity.hoursPerAccount"
+                  label="Hours per treated account (month)"
+                  suffix="h"
+                  hint="Defaults: 1:1 = 32 h · 1:few = 12 h · 1:many = 3 h."
+                  sublabel="Typical effort to run ABM per account; set by tier."
+                />
+              </div>
+            </AdvancedBlock>
+
+            <div className="rounded-md border bg-background/60 p-3 text-xs text-muted-foreground">
+              <p>
+                Requested coverage: {requestedAccounts} accounts
+                {totalTargets > 0 ? ` (${requestRateLabel}% of ${totalTargets} targets).` : "."}
+              </p>
+              <p>
+                Your team can fully treat {budgetCapacityAccounts} of {requestedAccounts} accounts ({coverageLabel}%).
+                {" "}
+                {bottleneck === "balanced" ? (
+                  "Balanced load across marketing and sales."
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="cursor-help underline decoration-dotted underline-offset-2">
+                        Bottleneck: {bottleneck === "marketing" ? "marketing" : "sales"}.
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" align="center" className="max-w-xs text-xs">
+                      We use the smaller of marketing and sales hours to cap coverage.
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </p>
+              {shortfall > 0 ? (
+                <p>
+                  Shortfall of {shortfall} accounts until you add headcount or reduce scope.
+                </p>
+              ) : null}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+        <FormField
+          control={control}
+          name="alignment.level"
+          render={({ field }) => (
+            <FormItem>
+              <div className="flex items-center justify-between gap-2">
+                <FormLabel>Sales &amp; marketing alignment</FormLabel>
+                <HintTooltip
+                  label="Sales and marketing alignment"
+                  hint="Alignment changes ABM effectiveness. Poor reduces uplifts and slows deals; excellent boosts both."
+                />
+              </div>
+              <FormControl>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select alignment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="poor">Poor</SelectItem>
+                    <SelectItem value="standard">Standard</SelectItem>
+                    <SelectItem value="excellent">Excellent</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <p className="text-xs text-muted-foreground">{alignmentDescriptions[alignmentLevel]}</p>
+        <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-3">
+          <span>Opp uplift ×{alignmentMultipliers.opportunity.toFixed(2)}</span>
+          <span>Win uplift ×{alignmentMultipliers.win.toFixed(2)}</span>
+          <span>Velocity ×{alignmentMultipliers.velocity.toFixed(2)}</span>
+        </div>
+      </div>
+
+      
     </div>
   );
 }
@@ -2233,7 +2958,7 @@ function SalesCycleField({
                 <p className="text-xs text-muted-foreground">
                   {overrideEnabled
                     ? "Manual override active."
-                    : `Auto-derived using the ${presetLabel} ${selectedReduction}% reduction for your tier, scaled by coverage intensity.`}
+                    : `Auto-derived using the ${presetLabel} ${selectedReduction}% reduction for your tier, scaled by coverage intensity and alignment.`}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Typical {Math.round(reductionConfig.typical * 100)}% · stretch {Math.round(

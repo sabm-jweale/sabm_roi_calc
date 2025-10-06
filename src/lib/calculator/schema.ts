@@ -14,6 +14,8 @@ const num = (min?: number, max?: number) => {
 
 const percentage = (min: number, max: number) => z.coerce.number().min(min, { message: `Must be ≥ ${min}%.` }).max(max, { message: `Must be ≤ ${max}%.` });
 
+const capacitySourceEnum = z.enum(["budget", "team"]);
+
 export const programmeSchema = z
   .object({
     durationMonths: num(0, 24),
@@ -61,6 +63,37 @@ export const costsSchema = z
     message: "At least one cost line must be greater than zero.",
   });
 
+export const capacitySchema = z
+  .object({
+    source: capacitySourceEnum,
+    marketingFte: num(0, 500),
+    salesFte: num(0, 500),
+    marketingUtilisation: percentage(0, 100),
+    salesUtilisation: percentage(0, 100),
+    hoursPerAccount: num(1, 200),
+    budgetCapacityAccounts: z.number().min(0).max(5000).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.source === "team") {
+      if (value.marketingFte <= 0 && value.salesFte <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["marketingFte"],
+          message: "Set at least one FTE to use team time.",
+        });
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["salesFte"],
+          message: "Set at least one FTE to use team time.",
+        });
+      }
+    }
+  });
+
+export const alignmentSchema = z.object({
+  level: z.enum(["poor", "standard", "excellent"]),
+});
+
 export const sensitivitySchema = z.object({
   inMarketRange: z.array(z.number().min(0).max(100)).nonempty(),
   winRateUpliftRange: z.array(z.number().min(0).max(100)).nonempty(),
@@ -72,6 +105,8 @@ export const scenarioSchema = z.object({
   market: marketSchema,
   uplifts: upliftSchema,
   costs: costsSchema,
+  capacity: capacitySchema,
+  alignment: alignmentSchema,
   sensitivity: sensitivitySchema,
 });
 
@@ -87,7 +122,7 @@ export const DEFAULT_SCENARIO: ScenarioInputs = scenarioSchema.parse({
   market: {
     targetAccounts: 150,
     inMarketRate: 18,
-    qualifiedOppsPerAccount: 0.6,
+    qualifiedOppsPerAccount: 1,
     baselineWinRate: 22,
     baselineAcv: 65_000,
     contributionMargin: 55,
@@ -106,6 +141,17 @@ export const DEFAULT_SCENARIO: ScenarioInputs = scenarioSchema.parse({
     content: 60_000,
     agency: 40_000,
     other: 15_000,
+  },
+  capacity: {
+    source: "budget",
+    marketingFte: 3,
+    salesFte: 2,
+    marketingUtilisation: 70,
+    salesUtilisation: 50,
+    hoursPerAccount: 12,
+  },
+  alignment: {
+    level: "standard",
   },
   sensitivity: {
     inMarketRange: [12, 18, 24],
