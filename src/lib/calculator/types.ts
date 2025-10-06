@@ -35,6 +35,24 @@ export interface ProgrammeCosts {
   other: number;
 }
 
+export type CapacitySource = "budget" | "team";
+
+export interface CapacityInputs {
+  source: CapacitySource;
+  marketingFte: number;
+  salesFte: number;
+  marketingUtilisation: Float;
+  salesUtilisation: Float;
+  hoursPerAccount: number;
+  budgetCapacityAccounts?: number;
+}
+
+export type AlignmentLevel = "poor" | "standard" | "excellent";
+
+export interface AlignmentInputs {
+  level: AlignmentLevel;
+}
+
 export interface SensitivityConfig {
   inMarketRange: Float[];
   winRateUpliftRange: Float[];
@@ -46,6 +64,8 @@ export interface ScenarioInputs {
   market: MarketFunnelInputs;
   uplifts: UpliftInputs;
   costs: ProgrammeCosts;
+  capacity: CapacityInputs;
+  alignment: AlignmentInputs;
   sensitivity: SensitivityConfig;
 }
 

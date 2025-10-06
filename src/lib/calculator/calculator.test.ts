@@ -8,6 +8,7 @@ import {
   calculateScenario,
   sumProgrammeCosts,
 } from "./calculator";
+import { deriveCoverage } from "./capacity";
 import { ScenarioInputs } from "./types";
 
 const BASE_SCENARIO: ScenarioInputs = {
@@ -39,6 +40,17 @@ const BASE_SCENARIO: ScenarioInputs = {
     content: 60_000,
     agency: 40_000,
     other: 15_000,
+  },
+  capacity: {
+    source: "budget",
+    marketingFte: 3,
+    salesFte: 2,
+    marketingUtilisation: 70,
+    salesUtilisation: 50,
+    hoursPerAccount: 12,
+  },
+  alignment: {
+    level: "standard",
   },
   sensitivity: {
     inMarketRange: [25, 35, 45],
@@ -121,6 +133,26 @@ describe("calculateScenario", () => {
     expect(result.inputs).toEqual(BASE_SCENARIO);
     expect(result.guardrails).toEqual([]);
     expect(result.outputs.incremental.incrementalRevenue).toBeGreaterThan(0);
+  });
+});
+
+describe("deriveCoverage", () => {
+  it("caps treated accounts by budget capacity when budget is limiting", () => {
+    const market = {
+      ...BASE_SCENARIO.market,
+      targetAccounts: 20,
+      inMarketRate: 50,
+    };
+
+    const coverage = deriveCoverage(market, {
+      ...BASE_SCENARIO.capacity,
+      source: "budget",
+      budgetCapacityAccounts: 5,
+    });
+
+    expect(coverage.requestedAccounts).toBe(10);
+    expect(coverage.treatedAccounts).toBe(5);
+    expect(coverage.budgetCapacityAccounts).toBe(5);
   });
 });
 
