@@ -10,6 +10,11 @@ import {
   SensitivityCell,
   SensitivityGrid,
 } from "./types";
+import {
+  deriveAlignmentMultipliers,
+  deriveCoverage,
+  deriveIntensity,
+} from "./capacity";
 
 const ONE_HUNDRED = 100;
 
@@ -146,9 +151,25 @@ export const calculateIncremental = (
 };
 
 export const calculateScenario = (inputs: ScenarioInputs): ScenarioResult => {
-  const baseline = calculateBaseline(inputs.market);
-  const abm = calculateAbm(inputs.market, baseline, inputs.uplifts);
-  const incremental = calculateIncremental(inputs.programme, inputs.market, baseline, abm, inputs.costs);
+  const coverage = deriveCoverage(inputs.market, inputs.capacity);
+  const intensity = deriveIntensity(coverage.coverageRate);
+  const alignmentMultipliers = deriveAlignmentMultipliers(inputs.alignment);
+
+  const effectiveMarket = {
+    ...inputs.market,
+    inMarketRate: coverage.coverageRate * ONE_HUNDRED,
+  } as ScenarioInputs["market"];
+
+  const effectiveUplifts: ScenarioInputs["uplifts"] = {
+    opportunityRateUplift:
+      inputs.uplifts.opportunityRateUplift * alignmentMultipliers.opportunity * intensity,
+    winRateUplift: inputs.uplifts.winRateUplift * alignmentMultipliers.win * intensity,
+    acvUplift: inputs.uplifts.acvUplift * intensity,
+  };
+
+  const baseline = calculateBaseline(effectiveMarket);
+  const abm = calculateAbm(effectiveMarket, baseline, effectiveUplifts);
+  const incremental = calculateIncremental(inputs.programme, effectiveMarket, baseline, abm, inputs.costs);
 
   const outputs: ScenarioOutputs = {
     baseline,
