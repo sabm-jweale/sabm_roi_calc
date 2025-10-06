@@ -113,26 +113,22 @@ const TIER_CONFIG: Record<
     label: string;
     helper: string;
     defaultAccounts: number;
-    defaultQualifiedOpps: number;
   }
 > = {
   oneToOne: {
     label: "Single Account (1:1)",
     helper: "High touch, 3-5 accounts. Expect deeper personalization.",
     defaultAccounts: 4,
-    defaultQualifiedOpps: 1.2,
   },
   oneToFew: {
     label: "Clustered (1:few)",
     helper: "Clustered pods, 10–25 accounts. Balanced scale vs depth.",
     defaultAccounts: 20,
-    defaultQualifiedOpps: 0.6,
   },
   oneToMany: {
     label: "Programmatic (1:many)",
     helper: "At-scale motions, 100+ accounts. Efficiency matters.",
     defaultAccounts: 100,
-    defaultQualifiedOpps: 0.4,
   },
 };
 
@@ -315,6 +311,7 @@ export function ScenarioPlanner() {
         inMarketRate: toNumber(watchedInputs.market?.inMarketRate),
         qualifiedOppsPerAccount: toNumber(
           watchedInputs.market?.qualifiedOppsPerAccount,
+          1,
         ),
         baselineWinRate: toNumber(watchedInputs.market?.baselineWinRate),
         baselineAcv: toNumber(watchedInputs.market?.baselineAcv),
@@ -443,14 +440,6 @@ export function ScenarioPlanner() {
       shouldValidate: true,
       shouldDirty: true,
     });
-    form.setValue(
-      "market.qualifiedOppsPerAccount",
-      tierDefaults.defaultQualifiedOpps,
-      {
-        shouldValidate: true,
-        shouldDirty: true,
-      },
-    );
   }, [tier, form]);
 
   useEffect(() => {
@@ -1946,28 +1935,19 @@ type BudgetStepProps = {
 function BudgetStep({ control, totalCost, onTotalCostChange }: BudgetStepProps) {
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 sm:grid-cols-2">
-        <div>
-          <label className="mb-2 block text-sm font-medium text-foreground">
-            Total programme investment
-          </label>
-          <Input
-            value={totalCost}
-            onChange={(event) => onTotalCostChange(Number(event.target.value))}
-            inputMode="decimal"
-            className="text-base"
-          />
-          <p className="mt-1 text-xs text-muted-foreground">
-            Enter the blended annual budget. You can split it out in Advanced.
-          </p>
-        </div>
-        <NumberField
-          control={control}
-          name="market.qualifiedOppsPerAccount"
-          label="Qualified opps per in-market account"
-          hint="Keeps the delivery team honest on capacity."
-          sublabel="Historic SQOs per in-market account you can support."
+      <div>
+        <label className="mb-2 block text-sm font-medium text-foreground">
+          Total programme investment
+        </label>
+        <Input
+          value={totalCost}
+          onChange={(event) => onTotalCostChange(Number(event.target.value))}
+          inputMode="decimal"
+          className="text-base"
         />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Enter the blended annual budget. You can split it out in Advanced.
+        </p>
       </div>
 
       <AdvancedBlock title="Cost breakdown (advanced)">

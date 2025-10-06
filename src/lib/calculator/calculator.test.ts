@@ -20,7 +20,7 @@ const BASE_SCENARIO: ScenarioInputs = {
   market: {
     targetAccounts: 150,
     inMarketRate: 35,
-    qualifiedOppsPerAccount: 0.6,
+    qualifiedOppsPerAccount: 1,
     baselineWinRate: 22,
     baselineAcv: 65_000,
     contributionMargin: 55,
@@ -58,10 +58,10 @@ describe("calculateBaseline", () => {
     const baseline = calculateBaseline(BASE_SCENARIO.market);
 
     expect(baseline.inMarketAccounts).toBeCloseTo(52.5);
-    expect(baseline.qualifiedOpps).toBeCloseTo(31.5);
-    expect(baseline.expectedWins).toBeCloseTo(6.93, 5);
-    expect(baseline.revenue).toBeCloseTo(450_450);
-    expect(baseline.grossProfit).toBeCloseTo(247_747.5);
+    expect(baseline.qualifiedOpps).toBeCloseTo(52.5);
+    expect(baseline.expectedWins).toBeCloseTo(11.55, 5);
+    expect(baseline.revenue).toBeCloseTo(750_750);
+    expect(baseline.grossProfit).toBeCloseTo(412_912.5);
   });
 });
 
@@ -70,11 +70,11 @@ describe("calculateAbm", () => {
     const baseline = calculateBaseline(BASE_SCENARIO.market);
     const abm = calculateAbm(BASE_SCENARIO.market, baseline, BASE_SCENARIO.uplifts);
 
-    expect(abm.qualifiedOpps).toBeCloseTo(39.375);
-    expect(abm.expectedWins).toBeCloseTo(13.3875, 5);
+    expect(abm.qualifiedOpps).toBeCloseTo(65.625);
+    expect(abm.expectedWins).toBeCloseTo(22.3125, 5);
     expect(abm.acv).toBeCloseTo(76_700);
-    expect(abm.revenue).toBeCloseTo(1_026_821.25);
-    expect(abm.grossProfit).toBeCloseTo(564_751.6875, 4);
+    expect(abm.revenue).toBeCloseTo(1_711_368.75);
+    expect(abm.grossProfit).toBeCloseTo(941_252.8125, 4);
   });
 });
 
@@ -90,11 +90,11 @@ describe("calculateIncremental", () => {
       BASE_SCENARIO.costs,
     );
 
-    expect(incremental.incrementalRevenue).toBeCloseTo(576_371.25);
-    expect(incremental.incrementalGrossProfit).toBeCloseTo(317_004.1875, 4);
-    expect(incremental.roi).toBeCloseTo(-0.3255, 4);
+    expect(incremental.incrementalRevenue).toBeCloseTo(960_618.75);
+    expect(incremental.incrementalGrossProfit).toBeCloseTo(528_340.3125, 4);
+    expect(incremental.roi).toBeCloseTo(0.1241, 4);
     expect(incremental.breakEvenWins).toBe(12);
-    expect(incremental.paybackMonths).toBeCloseTo(11.86, 2);
+    expect(incremental.paybackMonths).toBeCloseTo(7.12, 2);
   });
 
   it("returns null ROI and payback when programme cost is zero", () => {

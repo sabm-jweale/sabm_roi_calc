@@ -118,11 +118,6 @@ const marketFields: Array<{
     hint: "% of target accounts currently in-market or with active demand.",
   },
   {
-    name: "market.qualifiedOppsPerAccount",
-    label: "Qualified opps per in-market account",
-    hint: "Average sales-qualified opportunities you expect per in-market account.",
-  },
-  {
     name: "market.baselineWinRate",
     label: "Baseline win rate (%)",
     hint: "Historical close rate without ABM influence (percentage).",
@@ -250,6 +245,7 @@ export function ScenarioPlanner() {
         inMarketRate: toNumber(watchedInputs.market?.inMarketRate),
         qualifiedOppsPerAccount: toNumber(
           watchedInputs.market?.qualifiedOppsPerAccount,
+          1,
         ),
         baselineWinRate: toNumber(watchedInputs.market?.baselineWinRate),
         baselineAcv: toNumber(watchedInputs.market?.baselineAcv),
