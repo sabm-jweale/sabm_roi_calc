@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import {
   useEffect,
   useLayoutEffect,
@@ -145,48 +146,71 @@ const TIER_CONFIG: Record<
   },
 };
 
+const TIER_KEYS: readonly TierKey[] = ["oneToOne", "oneToFew", "oneToMany"] as const;
+
+const deriveInitialTier = (accounts: number): TierKey => {
+  if (!Number.isFinite(accounts)) {
+    return "oneToFew";
+  }
+
+  let selected: TierKey = "oneToFew";
+  let bestDelta = Number.POSITIVE_INFINITY;
+
+  for (const key of TIER_KEYS) {
+    const diff = Math.abs(TIER_CONFIG[key].defaultAccounts - accounts);
+    if (diff < bestDelta) {
+      bestDelta = diff;
+      selected = key;
+    }
+  }
+
+  return selected;
+};
+
+const DEFAULT_TIER = deriveInitialTier(DEFAULT_SCENARIO.market.targetAccounts);
+
 const PRESET_CONFIG: Record<
   PresetKey,
   {
     label: string;
     helper: string;
-    uplifts: {
-      winRateUplift: number;
-      acvUplift: number;
-      opportunityRateUplift: number;
+    upliftMultipliers: {
+      winRate: number;
+      acv: number;
+      opportunity: number;
     };
-    inMarketRate?: number;
+    inMarketMultiplier?: number;
   }
 > = {
   conservative: {
     label: "Conservative",
     helper: "Building your first ABM programme? Start here.",
-    uplifts: {
-      winRateUplift: 4,
-      acvUplift: 6,
-      opportunityRateUplift: 10,
+    upliftMultipliers: {
+      winRate: 0.5,
+      acv: 0.4,
+      opportunity: 0.5,
     },
-    inMarketRate: 12,
+    inMarketMultiplier: 0.67,
   },
   expected: {
     label: "Expected",
     helper: "Got some ABM experience and ready to get started.",
-    uplifts: {
-      winRateUplift: 8,
-      acvUplift: 15,
-      opportunityRateUplift: 20,
+    upliftMultipliers: {
+      winRate: 1,
+      acv: 1,
+      opportunity: 1,
     },
-    inMarketRate: 18,
+    inMarketMultiplier: 1,
   },
   stretch: {
     label: "Stretch",
     helper: "Been running established ABM programmes with reliable success? Push for upside.",
-    uplifts: {
-      winRateUplift: 12,
-      acvUplift: 25,
-      opportunityRateUplift: 35,
+    upliftMultipliers: {
+      winRate: 1.5,
+      acv: 1.6666666666666667,
+      opportunity: 1.75,
     },
-    inMarketRate: 24,
+    inMarketMultiplier: 1.33,
   },
 };
 
@@ -266,15 +290,18 @@ export function ScenarioPlanner() {
 
   const [mode, setMode] = useState<Mode>("setup");
   const [setupStep, setSetupStep] = useState<SetupStep>("programme");
-  const [tier, setTier] = useState<TierKey>("oneToFew");
+  const [tier, setTier] = useState<TierKey>(() => DEFAULT_TIER);
   const [preset, setPreset] = useState<PresetKey>("expected");
   const [cyclePreset, setCyclePreset] = useState<CyclePresetKey>("typical");
   const [cycleOverrideEnabled, setCycleOverrideEnabled] = useState(false);
   const [showCoach, setShowCoach] = useState(false);
   const [coachStep, setCoachStep] = useState(0);
   const [showDetails, setShowDetails] = useState(false);
+  const [showBaselineComparison, setShowBaselineComparison] = useState(false);
   const [inMarketAuto, setInMarketAuto] = useState(true);
-  const [buyingWindowMonths, setBuyingWindowMonths] = useState(() => DEFAULT_BUYING_WINDOW_MONTHS[tier]);
+  const [buyingWindowMonths, setBuyingWindowMonths] = useState(
+    () => DEFAULT_BUYING_WINDOW_MONTHS[DEFAULT_TIER],
+  );
   const [customBuyingWindow, setCustomBuyingWindow] = useState(false);
   const [flatBudget, setFlatBudget] = useState(0);
 
@@ -369,6 +396,7 @@ export function ScenarioPlanner() {
         content: toNumber(watchedInputs.costs?.content),
         agency: toNumber(watchedInputs.costs?.agency),
         other: toNumber(watchedInputs.costs?.other),
+        totalOverride: toNumber(watchedInputs.costs?.totalOverride),
       },
       capacity: {
         source: watchedInputs.capacity?.source === "team" ? "team" : "budget",
@@ -437,18 +465,12 @@ export function ScenarioPlanner() {
     }
   }, [categoryTotal, flatBudget]);
 
-  const effectiveCosts = useMemo(() => {
-    if (categoryTotal > 0 || flatBudget <= 0) {
-      return sanitizedInputs.costs;
-    }
-
-    return {
-      ...sanitizedInputs.costs,
-      people: flatBudget,
-    } satisfies ScenarioInputSchema["costs"];
-  }, [sanitizedInputs.costs, categoryTotal, flatBudget]);
-
-  const totalCost = categoryTotal > 0 ? categoryTotal : flatBudget;
+  const availableBudgetTotal = categoryTotal > 0 ? categoryTotal : flatBudget;
+  const programmeCostOverride = flatBudget > 0
+    ? flatBudget
+    : sanitizedInputs.costs.totalOverride && sanitizedInputs.costs.totalOverride > 0
+      ? sanitizedInputs.costs.totalOverride
+      : undefined;
 
   const budgetCapacityEstimate = useMemo(() => {
     if (sanitizedInputs.capacity.source !== "budget") {
@@ -460,9 +482,9 @@ export function ScenarioPlanner() {
       return undefined;
     }
 
-    const raw = Math.floor(totalCost / perAccount);
+    const raw = Math.floor(availableBudgetTotal / perAccount);
     return Math.max(0, Math.min(5000, raw));
-  }, [sanitizedInputs.capacity.source, totalCost, tier]);
+  }, [sanitizedInputs.capacity.source, availableBudgetTotal, tier]);
 
   const capacityWithBudget = useMemo(() => {
     if (sanitizedInputs.capacity.source === "budget") {
@@ -510,8 +532,78 @@ export function ScenarioPlanner() {
       : sanitizedInputs.alignment.level === "excellent"
         ? "Excellent"
         : "Standard";
-  const coverageIntensity = deriveIntensity(coverageSummary.coverageRate);
+  const coverageIntensity = deriveIntensity(coverageSummary.saturationRate);
+  const perAccountBenchmark =
+    sanitizedInputs.capacity.source === "budget" ? BUDGET_PER_ACCOUNT_ESTIMATE[tier] : null;
+  const requiredBudgetValue =
+    sanitizedInputs.capacity.source === "budget" && perAccountBenchmark !== null
+      ? coverageSummary.requestedAccounts * perAccountBenchmark
+      : null;
+  const actualBudgetUsedValue =
+    sanitizedInputs.capacity.source === "budget" && perAccountBenchmark !== null
+      ? Math.min(availableBudgetTotal, coverageSummary.treatedAccounts * perAccountBenchmark)
+      : availableBudgetTotal;
+  const budgetLeftoverValue =
+    sanitizedInputs.capacity.source === "budget"
+      ? Math.max(0, availableBudgetTotal - actualBudgetUsedValue)
+      : 0;
+  const budgetShortfallValue =
+    sanitizedInputs.capacity.source === "budget" && requiredBudgetValue !== null
+      ? Math.max(0, requiredBudgetValue - availableBudgetTotal)
+      : 0;
+  const budgetIsHigh =
+    sanitizedInputs.capacity.source === "budget" &&
+    requiredBudgetValue !== null &&
+    availableBudgetTotal > requiredBudgetValue;
   const alignmentEffectsText = `Opp ×${alignmentOpportunity.toFixed(2)}, Win ×${alignmentWin.toFixed(2)}, Velocity ×${alignmentVelocity.toFixed(2)}`;
+
+  const effectiveCosts = useMemo(() => {
+    if (sanitizedInputs.capacity.source !== "budget") {
+      return sanitizedInputs.costs;
+    }
+
+    if (availableBudgetTotal <= 0 || actualBudgetUsedValue <= 0) {
+      return sanitizedInputs.costs;
+    }
+
+    if (Math.abs(actualBudgetUsedValue - availableBudgetTotal) < 1) {
+      return sanitizedInputs.costs;
+    }
+
+    const ratio = actualBudgetUsedValue / availableBudgetTotal;
+    const keys = ["people", "media", "dataTech", "content", "agency", "other"] as const;
+    const scaled: ScenarioInputSchema["costs"] = { ...sanitizedInputs.costs };
+    let running = 0;
+
+    keys.forEach((key, index) => {
+      const base = sanitizedInputs.costs[key];
+      let value = Math.max(0, Math.round(base * ratio));
+
+      if (index === keys.length - 1) {
+        value = Math.max(0, Math.round(actualBudgetUsedValue - running));
+      } else {
+        running += value;
+      }
+
+      scaled[key] = value;
+    });
+
+    const totalScaled = keys.reduce((sum, key) => sum + scaled[key], 0);
+
+    if (totalScaled <= 0) {
+      scaled.people = Math.max(0, Math.round(actualBudgetUsedValue));
+    } else if (totalScaled !== Math.round(actualBudgetUsedValue)) {
+      const diff = Math.round(actualBudgetUsedValue) - totalScaled;
+      scaled.people = Math.max(0, scaled.people + diff);
+    }
+
+    return scaled;
+  }, [
+    sanitizedInputs.costs,
+    sanitizedInputs.capacity.source,
+    availableBudgetTotal,
+    actualBudgetUsedValue,
+  ]);
 
   useEffect(() => {
     if (!inMarketAuto) {
@@ -568,46 +660,93 @@ export function ScenarioPlanner() {
   };
 
   useEffect(() => {
-    const tierDefaults = TIER_CONFIG[tier];
-    form.setValue("market.targetAccounts", tierDefaults.defaultAccounts, {
-      shouldValidate: true,
-      shouldDirty: true,
-    });
-  }, [tier, form]);
-
-  useEffect(() => {
     const presetDefaults = PRESET_CONFIG[preset];
-    form.setValue("uplifts.winRateUplift", presetDefaults.uplifts.winRateUplift, {
-      shouldValidate: true,
-      shouldDirty: true,
-    });
-    form.setValue("uplifts.acvUplift", presetDefaults.uplifts.acvUplift, {
-      shouldValidate: true,
-      shouldDirty: true,
-    });
-    form.setValue(
-      "uplifts.opportunityRateUplift",
-      presetDefaults.uplifts.opportunityRateUplift,
-      {
-        shouldValidate: true,
-        shouldDirty: true,
-      },
+    const { upliftMultipliers, inMarketMultiplier } = presetDefaults;
+
+    const uplifts = form.getValues("uplifts");
+
+    const clamp = (value: number, min: number, max: number) =>
+      Math.min(max, Math.max(min, value));
+
+    const applyMultiplier = (
+      currentValue: unknown,
+      multiplier: number,
+      fallback: number,
+      min: number,
+      max: number,
+    ): number => {
+      const numeric = Number(currentValue);
+      const base = Number.isFinite(numeric) ? numeric : fallback;
+      const next = clamp(base * multiplier, min, max);
+      return Number.isFinite(next) ? Number(next.toFixed(1)) : fallback;
+    };
+
+    const winRateCurrent = Number(uplifts?.winRateUplift);
+    const winRateNext = applyMultiplier(
+      uplifts?.winRateUplift,
+      upliftMultipliers.winRate,
+      DEFAULT_SCENARIO.uplifts.winRateUplift,
+      0,
+      20,
     );
-    if (presetDefaults.inMarketRate !== undefined) {
-      form.setValue("market.inMarketRate", presetDefaults.inMarketRate, {
+    if (!Number.isFinite(winRateCurrent) || Math.abs(winRateCurrent - winRateNext) > 0.001) {
+      form.setValue("uplifts.winRateUplift", winRateNext, {
         shouldValidate: true,
         shouldDirty: true,
       });
     }
-  }, [preset, form]);
 
-  useEffect(() => {
-    if (!inMarketAuto || customBuyingWindow) {
-      return;
+    const acvCurrent = Number(uplifts?.acvUplift);
+    const acvNext = applyMultiplier(
+      uplifts?.acvUplift,
+      upliftMultipliers.acv,
+      DEFAULT_SCENARIO.uplifts.acvUplift,
+      -30,
+      100,
+    );
+    if (!Number.isFinite(acvCurrent) || Math.abs(acvCurrent - acvNext) > 0.001) {
+      form.setValue("uplifts.acvUplift", acvNext, {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
     }
 
-    setBuyingWindowMonths(DEFAULT_BUYING_WINDOW_MONTHS[tier]);
-  }, [tier, inMarketAuto, customBuyingWindow]);
+    const opportunityCurrent = Number(uplifts?.opportunityRateUplift);
+    const opportunityNext = applyMultiplier(
+      uplifts?.opportunityRateUplift,
+      upliftMultipliers.opportunity,
+      DEFAULT_SCENARIO.uplifts.opportunityRateUplift,
+      0,
+      100,
+    );
+    if (!Number.isFinite(opportunityCurrent) || Math.abs(opportunityCurrent - opportunityNext) > 0.001) {
+      form.setValue("uplifts.opportunityRateUplift", opportunityNext, {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
+    }
+
+    if (!inMarketAuto && inMarketMultiplier !== undefined) {
+      const currentMarketRate = Number(form.getValues("market.inMarketRate"));
+      const nextMarketRate = applyMultiplier(
+        currentMarketRate,
+        inMarketMultiplier,
+        DEFAULT_SCENARIO.market.inMarketRate,
+        0,
+        70,
+      );
+
+      if (
+        !Number.isFinite(currentMarketRate) ||
+        Math.abs(currentMarketRate - nextMarketRate) > 0.001
+      ) {
+        form.setValue("market.inMarketRate", nextMarketRate, {
+          shouldValidate: true,
+          shouldDirty: true,
+        });
+      }
+    }
+  }, [preset, form, inMarketAuto]);
 
   useEffect(() => {
     const capacityDirty = dirtyFields.capacity as
@@ -620,7 +759,7 @@ export function ScenarioPlanner() {
     const defaultHours = TEAM_HOURS_PER_ACCOUNT[tier];
     const current = Number(form.getValues("capacity.hoursPerAccount"));
 
-    if (!Number.isFinite(current) || Math.abs(current - defaultHours) > 0.5) {
+    if (!Number.isFinite(current) || current <= 0) {
       form.setValue("capacity.hoursPerAccount", defaultHours, {
         shouldValidate: true,
         shouldDirty: false,
@@ -676,14 +815,23 @@ export function ScenarioPlanner() {
   const scenarioInputs = useMemo<ScenarioInputSchema>(() => {
     return {
       ...sanitizedInputs,
-      costs: effectiveCosts,
+      costs: {
+        ...effectiveCosts,
+        totalOverride: programmeCostOverride,
+      },
       capacity: capacityWithBudget,
       market: {
         ...sanitizedInputs.market,
         inMarketRate: baseInMarketRate,
       },
     };
-  }, [sanitizedInputs, effectiveCosts, capacityWithBudget, baseInMarketRate]);
+  }, [
+    sanitizedInputs,
+    effectiveCosts,
+    capacityWithBudget,
+    baseInMarketRate,
+    programmeCostOverride,
+  ]);
 
   const scenarioResult = useMemo(() => {
     const parsed = scenarioSchema.safeParse(scenarioInputs);
@@ -726,6 +874,103 @@ export function ScenarioPlanner() {
     value: number | null | undefined,
     fractionDigits = 1,
   ) => formatPercentIntl(value, locale, { fractionDigits });
+
+  const totalCostValue = scenarioResult?.outputs.incremental.totalCost ?? null;
+  const programmeRevenueValue = scenarioResult?.outputs.abm.revenue ?? null;
+  const programmeGrossProfitValue = scenarioResult?.outputs.abm.grossProfit ?? null;
+  const profitAfterSpendValue = scenarioResult?.outputs.incremental.profitAfterSpend ?? null;
+  const netRoiValue = scenarioResult?.outputs.incremental.roi ?? null;
+  const grossRoiValue = scenarioResult?.outputs.incremental.grossRoi ?? null;
+  const breakEvenWinsValue = scenarioResult?.outputs.incremental.breakEvenWins ?? null;
+  const incrementalWinsValue = scenarioResult?.outputs.incremental.incrementalWins ?? null;
+  const baselineWinsValue = scenarioResult?.outputs.baseline.expectedWins ?? null;
+  const abmWinsValue = scenarioResult?.outputs.abm.expectedWins ?? null;
+  const deltaWinsValue =
+    baselineWinsValue !== null && abmWinsValue !== null
+      ? abmWinsValue - baselineWinsValue
+      : null;
+  const paybackValue = scenarioResult?.outputs.incremental.paybackMonths ?? null;
+  const expectedInMarketAccounts = Math.max(0, Math.round(coverageSummary.requestedAccounts));
+  const baselineGrossProfitValue = scenarioResult?.outputs.baseline.grossProfit ?? null;
+  const deltaProfitAfterSpendValue =
+    profitAfterSpendValue !== null && baselineGrossProfitValue !== null
+      ? profitAfterSpendValue - baselineGrossProfitValue
+      : null;
+  const meetsBreakEven =
+    breakEvenWinsValue === null || incrementalWinsValue === null
+      ? null
+      : incrementalWinsValue >= breakEvenWinsValue;
+  const profitTone: "positive" | "neutral" | "negative" =
+    profitAfterSpendValue === null
+      ? "neutral"
+      : profitAfterSpendValue > 0
+        ? "positive"
+        : profitAfterSpendValue < 0
+          ? "negative"
+          : "neutral";
+  const roiTone: "positive" | "neutral" | "negative" =
+    netRoiValue === null
+      ? "neutral"
+      : netRoiValue >= 0
+        ? "positive"
+        : "negative";
+  const breakEvenBadgeVariant: "outline" | "secondary" | "destructive" =
+    breakEvenWinsValue === null || incrementalWinsValue === null
+      ? "outline"
+      : meetsBreakEven
+        ? "secondary"
+        : "destructive";
+  const breakEvenCopy =
+    breakEvenWinsValue === null
+      ? "Add programme investment to calculate break-even wins and payback."
+      : incrementalWinsValue === null
+        ? "Incremental wins are unavailable for this scenario."
+        : meetsBreakEven
+          ? "Expected incremental wins meet or exceed the break-even threshold."
+          : "Expected incremental wins fall short of break-even—tighten assumptions or expand scope.";
+
+  const budgetHighHint =
+    budgetIsHigh && requiredBudgetValue !== null
+      ? (
+        <>
+          <p>
+            Available budget {formatCurrencyValue(availableBudgetTotal)} exceeds the ≈
+            {formatCurrencyValue(requiredBudgetValue)} needed to treat ≈
+            {formatNumberValue(expectedInMarketAccounts, 0)} in-market accounts at full intensity.
+          </p>
+          <p>
+            Only {formatCurrencyValue(actualBudgetUsedValue)} is utilised in the scenario; leftover ≈
+            {formatCurrencyValue(budgetLeftoverValue)}.
+          </p>
+        </>
+      )
+      : null;
+
+  const formatWinsForTable = (value: number | null) => {
+    if (value === null) {
+      return formatNumberValue(null, 1);
+    }
+
+    const rounded = Math.round(value * 10) / 10;
+    const fractionDigits = Number.isInteger(rounded) ? 0 : 1;
+    const formatted = formatNumberValue(rounded, fractionDigits);
+
+    return Number.isInteger(rounded) ? formatted : `≈${formatted}`;
+  };
+
+  const formatWinsDeltaForTable = (value: number | null) => {
+    if (value === null) {
+      return formatNumberValue(null, 1);
+    }
+
+    const rounded = Math.round(value * 10) / 10;
+    const fractionDigits = Number.isInteger(rounded) ? 0 : 1;
+    const absolute = formatNumberValue(Math.abs(rounded), fractionDigits);
+    const prefix = rounded > 0 ? "+" : rounded < 0 ? "-" : "";
+    const signed = prefix ? `${prefix}${absolute}` : absolute;
+
+    return Number.isInteger(rounded) ? signed : `≈${signed}`;
+  };
 
   const treatedAccounts = coverageSummary.treatedAccounts;
   const requestedAccounts = coverageSummary.requestedAccounts;
@@ -967,6 +1212,7 @@ export function ScenarioPlanner() {
               </div>
               <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
                 <Button
+                  type="button"
                   size="sm"
                   variant="outline"
                   onClick={launchCoach}
@@ -975,6 +1221,7 @@ export function ScenarioPlanner() {
                   Guided tour
                 </Button>
                 <Button
+                  type="button"
                   size="lg"
                   className="self-start bg-cta text-white hover:bg-cta/90"
                   disabled={!setupComplete}
@@ -1085,7 +1332,7 @@ export function ScenarioPlanner() {
                       {setupStep === "budget" ? (
                         <BudgetStep
                           control={form.control}
-                          totalCost={totalCost}
+                          availableBudgetTotal={availableBudgetTotal}
                           onTotalCostChange={handleTotalCostChange}
                           capacitySummary={{
                             source: sanitizedInputs.capacity.source,
@@ -1244,7 +1491,7 @@ export function ScenarioPlanner() {
                           ? shortfallAccounts > 0
                             ? `Team-led cap: ${treatedAccounts} of ${requestedAccounts} requested accounts (${coveragePercent}% coverage). ${capacityBottleneckCopy}`
                             : `Team-led coverage holds at ${treatedAccounts} accounts (${coveragePercent}% of the list). ${alignmentLabel} alignment applies ${alignmentEffectsText}.`
-                          : totalCost > 0
+                          : availableBudgetTotal > 0
                             ? `Budget-led coverage assumes ${requestedAccounts} accounts (${requestRatePercent}% of the list). Alignment ${alignmentLabel} applies ${alignmentEffectsText}.`
                             : "Add investment numbers to size feasible coverage."}
                       </p>
@@ -1339,30 +1586,68 @@ export function ScenarioPlanner() {
                       <CardTitle>Headline KPIs</CardTitle>
                       <CardDescription>The numbers leadership jumps to first.</CardDescription>
                     </CardHeader>
-                    <CardContent className="grid gap-4">
-                      <KpiTile
-                        label="ROI"
-                        value={
-                          typeof scenarioResult?.outputs.incremental.roi === "number"
-                            ? formatPercentValue(scenarioResult.outputs.incremental.roi * 100, 1)
-                            : "—"
-                        }
-                        tone={scenarioResult?.outputs.incremental.roi ?? 0 >= 0 ? "positive" : "neutral"}
-                      />
-                      <KpiTile
-                        label="Payback"
-                        value={formatNumberValue(
-                          scenarioResult?.outputs.incremental.paybackMonths,
-                          1,
-                        )}
-                        helper="months"
-                      />
-                      <KpiTile
-                        label="Incremental gross profit"
-                        value={formatCurrencyValue(
-                          scenarioResult?.outputs.incremental.incrementalGrossProfit,
-                        )}
-                      />
+                    <CardContent className="space-y-4">
+                      <div className="grid gap-4">
+                        <KpiTile
+                          label="Profit after spend (this period)"
+                          value={formatCurrencyValue(profitAfterSpendValue)}
+                          helper={
+                            totalCostValue !== null
+                              ? `Programme cost ${formatCurrencyValue(totalCostValue)}`
+                              : undefined
+                          }
+                          tone={profitTone}
+                        />
+                        <KpiTile
+                          label="Net ROI (incremental)"
+                          value={
+                            typeof netRoiValue === "number"
+                              ? formatPercentValue(netRoiValue * 100, 1)
+                              : formatPercentValue(null, 1)
+                          }
+                          helper={`ROMI (gross) ${formatPercentValue(
+                            typeof grossRoiValue === "number" ? grossRoiValue * 100 : null,
+                            1,
+                          )}`}
+                          tone={roiTone}
+                        />
+                        <KpiTile
+                          label="Payback"
+                          value={formatNumberValue(
+                            scenarioResult?.outputs.incremental.paybackMonths,
+                            1,
+                          )}
+                          helper="months"
+                        />
+                      </div>
+                      {scenarioResult ? (
+                        <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {totalCostValue !== null ? (
+                              <Badge variant="outline">
+                                Programme cost {formatCurrencyValue(totalCostValue)}
+                              </Badge>
+                            ) : null}
+                            {sanitizedInputs.capacity.source === "budget" && requiredBudgetValue !== null ? (
+                              <Badge variant="outline">
+                                Required budget ≈{formatCurrencyValue(requiredBudgetValue)}
+                              </Badge>
+                            ) : null}
+                            <Badge variant="outline">
+                              Expected additional wins (ABM - baseline) {formatNumberValue(
+                                incrementalWinsValue,
+                                1,
+                              )}
+                            </Badge>
+                            {breakEvenWinsValue !== null ? (
+                              <Badge variant={breakEvenBadgeVariant}>
+                                Required wins {formatNumberValue(breakEvenWinsValue, 0)}
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <p>{breakEvenCopy}</p>
+                        </div>
+                      ) : null}
                     </CardContent>
                   </Card>
                   <Card className="shadow-sm">
@@ -1379,9 +1664,9 @@ export function ScenarioPlanner() {
                           : "Solid balance of coverage and impact. Log proof points for leadership review."}
                       </p>
                       <p>
-                        {totalCost === 0
+                        {availableBudgetTotal === 0
                           ? "Add programme investment so ROI reflects reality."
-                          : `Total investment captured: ${formatCurrencyValue(totalCost)}.`}
+                          : `Total investment captured: ${formatCurrencyValue(availableBudgetTotal)}.`}
                       </p>
                     </CardContent>
                   </Card>
@@ -1393,97 +1678,203 @@ export function ScenarioPlanner() {
               <section className="space-y-6">
                 {scenarioResult ? (
                   <>
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                       <KpiTile
-                        label="Net ROI"
-                        value={
-                          typeof scenarioResult.outputs.incremental.roi === "number"
-                            ? formatPercentValue(
-                                scenarioResult.outputs.incremental.roi * 100,
-                                1,
-                              )
-                            : "—"
+                        label="Programme revenue"
+                        value={formatCurrencyValue(programmeRevenueValue)}
+                        helper="ABM-attributed top-line for this period."
+                      />
+                      <KpiTile
+                        label="Programme gross profit"
+                        value={formatCurrencyValue(programmeGrossProfitValue)}
+                        helper="Before programme spend."
+                      />
+                      <KpiTile
+                        label="Programme cost"
+                        value={formatCurrencyValue(totalCostValue)}
+                        helper={
+                          sanitizedInputs.capacity.source === "budget" && requiredBudgetValue !== null
+                            ? budgetIsHigh
+                              ? `Using ${formatCurrencyValue(totalCostValue)} of ${formatCurrencyValue(availableBudgetTotal)} available (leftover ≈${formatCurrencyValue(budgetLeftoverValue)})`
+                              : budgetShortfallValue > 0
+                                ? `Using all available ${formatCurrencyValue(availableBudgetTotal)} (needs ≈${formatCurrencyValue(requiredBudgetValue)})`
+                                : `Using ${formatCurrencyValue(totalCostValue)} of ${formatCurrencyValue(availableBudgetTotal)} available.`
+                            : "All-in ABM investment entered above."
                         }
-                        tone={scenarioResult.outputs.incremental.roi ?? 0 >= 0 ? "positive" : "neutral"}
+                        tone={budgetIsHigh ? "negative" : budgetShortfallValue > 0 ? "negative" : "neutral"}
                       />
                       <KpiTile
-                        label="Payback"
-                        value={formatNumberValue(
-                          scenarioResult.outputs.incremental.paybackMonths,
-                          1,
-                        )}
-                        helper="months"
-                      />
-                      <KpiTile
-                        label="Incremental gross profit"
-                        value={formatCurrencyValue(
-                          scenarioResult.outputs.incremental.incrementalGrossProfit,
-                        )}
+                        label="Programme profit after spend"
+                        value={formatCurrencyValue(profitAfterSpendValue)}
+                        helper={
+                          totalCostValue !== null
+                            ? `Programme cost ${formatCurrencyValue(totalCostValue)}`
+                            : undefined
+                        }
+                        tone={profitTone}
                       />
                     </div>
                     <Card className="shadow-sm">
                       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                          <CardTitle>Scoreboard snapshot</CardTitle>
-                          <CardDescription>Baseline vs ABM in plain view.</CardDescription>
+                          <CardTitle>Programme scorecard</CardTitle>
+                          <CardDescription>
+                            ABM programme economics at a glance. Toggle baseline comparison when you need context.
+                          </CardDescription>
                         </div>
-                        <Button variant="outline" onClick={() => setShowDetails(true)}>
-                          View details
-                        </Button>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                          <Button
+                            type="button"
+                            variant={showBaselineComparison ? "secondary" : "ghost"}
+                            onClick={() => setShowBaselineComparison((prev) => !prev)}
+                            className="h-9"
+                            aria-pressed={showBaselineComparison}
+                          >
+                            {showBaselineComparison ? "Hide baseline" : "Show baseline"}
+                          </Button>
+                          <Button type="button" variant="outline" onClick={() => setShowDetails(true)}>
+                            View details
+                          </Button>
+                        </div>
                       </CardHeader>
                       <CardContent className="space-y-4">
-                        <table className="w-full text-sm">
-                          <thead className="text-left text-muted-foreground">
-                            <tr>
-                              <th className="py-2 pr-4 font-medium">Metric</th>
-                              <th className="py-2 pr-4 font-medium">Baseline</th>
-                              <th className="py-2 pr-4 font-medium">ABM</th>
-                              <th className="py-2 font-medium">Δ</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <SummaryRow
-                              label="Revenue"
-                              baseline={formatCurrencyValue(
-                                scenarioResult.outputs.baseline.revenue,
-                              )}
-                              abm={formatCurrencyValue(
-                                scenarioResult.outputs.abm.revenue,
-                              )}
-                              delta={formatCurrencyValue(
-                                scenarioResult.outputs.incremental.incrementalRevenue,
-                              )}
-                            />
-                            <SummaryRow
-                              label="Gross profit"
-                              baseline={formatCurrencyValue(
-                                scenarioResult.outputs.baseline.grossProfit,
-                              )}
-                              abm={formatCurrencyValue(
-                                scenarioResult.outputs.abm.grossProfit,
-                              )}
-                              delta={formatCurrencyValue(
-                                scenarioResult.outputs.incremental.incrementalGrossProfit,
-                              )}
-                            />
-                            <SummaryRow
-                              label="Wins"
-                              baseline={formatNumberValue(
-                                scenarioResult.outputs.baseline.expectedWins,
-                                0,
-                              )}
-                              abm={formatNumberValue(
-                                scenarioResult.outputs.abm.expectedWins,
-                                0,
-                              )}
-                              delta={formatNumberValue(
-                                scenarioResult.outputs.abm.expectedWins -
-                                  scenarioResult.outputs.baseline.expectedWins,
-                                0,
-                              )}
-                            />
-                          </tbody>
-                        </table>
+                        <div className="overflow-hidden rounded-md border">
+                          <table className="w-full text-sm">
+                            <thead className="bg-muted/40 text-left text-muted-foreground">
+                              <tr>
+                                <th className="py-2 pl-4 pr-4 font-medium">Metric</th>
+                                <th className="py-2 pr-4 font-medium">ABM programme</th>
+                                {showBaselineComparison ? (
+                                  <>
+                                    <th className="py-2 pr-4 font-medium">Baseline</th>
+                                    <th className="py-2 pr-4 font-medium">Δ</th>
+                                  </>
+                                ) : null}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <SummaryRow
+                                label="Revenue"
+                                primary={formatCurrencyValue(scenarioResult.outputs.abm.revenue)}
+                                secondary=
+                                  {showBaselineComparison
+                                    ? {
+                                        baseline: formatCurrencyValue(
+                                          scenarioResult.outputs.baseline.revenue,
+                                        ),
+                                        delta: formatCurrencyValue(
+                                          scenarioResult.outputs.incremental.incrementalRevenue,
+                                        ),
+                                      }
+                                    : undefined}
+                              />
+                              <SummaryRow
+                                label="Gross profit"
+                                primary={formatCurrencyValue(scenarioResult.outputs.abm.grossProfit)}
+                                secondary=
+                                  {showBaselineComparison
+                                    ? {
+                                        baseline: formatCurrencyValue(
+                                          scenarioResult.outputs.baseline.grossProfit,
+                                        ),
+                                        delta: formatCurrencyValue(
+                                          scenarioResult.outputs.incremental.incrementalGrossProfit,
+                                        ),
+                                      }
+                                    : undefined}
+                              />
+                              <SummaryRow
+                                label="Programme cost"
+                                primary={formatCurrencyValue(totalCostValue)}
+                                hint={budgetHighHint}
+                                secondary=
+                                  {showBaselineComparison
+                                    ? {
+                                        baseline: formatCurrencyValue(0),
+                                        delta: formatCurrencyValue(totalCostValue),
+                                      }
+                                    : undefined}
+                              />
+                              <SummaryRow
+                                label="Profit after spend"
+                                primary={formatCurrencyValue(profitAfterSpendValue)}
+                                secondary=
+                                  {showBaselineComparison
+                                    ? {
+                                        baseline: formatCurrencyValue(baselineGrossProfitValue),
+                                        delta: formatCurrencyValue(deltaProfitAfterSpendValue),
+                                      }
+                                    : undefined}
+                              />
+                              <SummaryRow
+                                label="Wins"
+                                primary={formatWinsForTable(abmWinsValue)}
+                                secondary=
+                                  {showBaselineComparison
+                                    ? {
+                                        baseline: formatWinsForTable(baselineWinsValue),
+                                        delta: formatWinsDeltaForTable(deltaWinsValue),
+                                      }
+                                    : undefined}
+                              />
+                            </tbody>
+                          </table>
+                        </div>
+                        {budgetIsHigh && requiredBudgetValue !== null ? (
+                          <div className="rounded-md bg-destructive/10 p-3 text-xs font-medium text-destructive">
+                            Spend exceeds the typical requirement. Required spend ≈{formatCurrencyValue(requiredBudgetValue)};
+                            current inputs are {formatCurrencyValue(budgetLeftoverValue)} higher and remain unused in this scenario.
+                          </div>
+                        ) : null}
+                        {!budgetIsHigh && budgetShortfallValue > 0 && requiredBudgetValue !== null ? (
+                          <div className="rounded-md bg-amber-100 p-3 text-xs font-medium text-amber-700">
+                            Available budget {formatCurrencyValue(availableBudgetTotal)} is below the ≈
+                            {formatCurrencyValue(requiredBudgetValue)} recommended to fully cover in-market demand. The model uses all
+                            available funds; shortfall ≈{formatCurrencyValue(budgetShortfallValue)}.
+                          </div>
+                        ) : null}
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <Badge variant="outline">
+                            Net ROI {formatPercentValue(
+                              typeof netRoiValue === "number" ? netRoiValue * 100 : null,
+                              1,
+                            )}
+                          </Badge>
+                          <Badge variant="outline">
+                            Gross ROMI {formatPercentValue(
+                              typeof grossRoiValue === "number" ? grossRoiValue * 100 : null,
+                              1,
+                            )}
+                          </Badge>
+                          <Badge variant="outline">
+                            Payback {formatNumberValue(paybackValue, 1)} mo
+                          </Badge>
+                          {sanitizedInputs.capacity.source === "budget" && requiredBudgetValue !== null ? (
+                            <Badge variant={budgetIsHigh ? "destructive" : "outline"}>
+                              {budgetIsHigh ? "Over benchmark spend" : "Required budget"}
+                              {` ≈${formatCurrencyValue(requiredBudgetValue)}`}
+                            </Badge>
+                          ) : null}
+                          {budgetLeftoverValue > 0 ? (
+                            <Badge variant="outline">Budget leftover ≈{formatCurrencyValue(budgetLeftoverValue)}</Badge>
+                          ) : null}
+                          {budgetShortfallValue > 0 ? (
+                            <Badge variant="destructive">
+                              Budget shortfall ≈{formatCurrencyValue(budgetShortfallValue)}
+                            </Badge>
+                          ) : null}
+                          <Badge variant="outline">
+                            Expected additional wins (ABM - baseline) {formatNumberValue(
+                              incrementalWinsValue,
+                              1,
+                            )}
+                          </Badge>
+                          {breakEvenWinsValue !== null ? (
+                            <Badge variant={breakEvenBadgeVariant}>
+                              Required wins {formatNumberValue(breakEvenWinsValue, 0)}
+                            </Badge>
+                          ) : null}
+                        </div>
                         <p className="text-xs text-muted-foreground">
                           Need more depth? Open the drawer for the full variance view and sensitivity heatmap.
                         </p>
@@ -1495,12 +1886,25 @@ export function ScenarioPlanner() {
                   <Card className="border-dashed bg-muted/30 text-center">
                     <CardContent className="space-y-3 py-10 text-sm text-muted-foreground">
                       <p>Complete setup and tune inputs to generate the scoreboard.</p>
-                      <Button variant="outline" onClick={() => setMode("setup")}>Back to step 1</Button>
+                      <Button type="button" variant="outline" onClick={() => setMode("setup")}>Back to step 1</Button>
                     </CardContent>
                   </Card>
                 )}
               </section>
             ) : null}
+
+            <footer className="mt-12 border-t border-border/60 pt-6">
+              <p className="text-xs text-muted-foreground">
+                Need a refresher on the inputs and outputs?{" "}
+                <Link
+                  href="/glossary"
+                  className="font-medium text-cta hover:text-cta/80"
+                >
+                  Explore the glossary
+                </Link>
+                .
+              </p>
+            </footer>
           </div>
         </form>
       </Form>
@@ -1534,7 +1938,7 @@ export function ScenarioPlanner() {
                   Baseline vs ABM breakdown and ROI sensitivity grid.
                 </p>
               </div>
-              <Button variant="ghost" onClick={() => setShowDetails(false)}>
+              <Button type="button" variant="ghost" onClick={() => setShowDetails(false)}>
                 Close
               </Button>
             </header>
@@ -1547,64 +1951,101 @@ export function ScenarioPlanner() {
                   <thead className="text-left text-muted-foreground">
                     <tr>
                       <th className="py-2 pr-4 font-medium">Metric</th>
+                      <th className="py-2 pr-4 font-medium">ABM programme</th>
                       <th className="py-2 pr-4 font-medium">Baseline</th>
-                      <th className="py-2 pr-4 font-medium">ABM</th>
                       <th className="py-2 font-medium">Δ</th>
                     </tr>
                   </thead>
                   <tbody>
                     <SummaryRow
                       label="Opportunities"
-                      baseline={formatNumberValue(
-                        scenarioResult.outputs.baseline.qualifiedOpps,
-                        1,
-                      )}
-                      abm={formatNumberValue(
+                      primary={formatNumberValue(
                         scenarioResult.outputs.abm.qualifiedOpps,
                         1,
                       )}
-                      delta={formatNumberValue(
-                        scenarioResult.outputs.abm.qualifiedOpps -
+                      secondary={{
+                        baseline: formatNumberValue(
                           scenarioResult.outputs.baseline.qualifiedOpps,
-                        1,
-                      )}
+                          1,
+                        ),
+                        delta: formatNumberValue(
+                          scenarioResult.outputs.abm.qualifiedOpps -
+                            scenarioResult.outputs.baseline.qualifiedOpps,
+                          1,
+                        ),
+                      }}
                     />
                     <SummaryRow
                       label="Revenue"
-                      baseline={formatCurrencyValue(
-                        scenarioResult.outputs.baseline.revenue,
-                      )}
-                      abm={formatCurrencyValue(
+                      primary={formatCurrencyValue(
                         scenarioResult.outputs.abm.revenue,
                       )}
-                      delta={formatCurrencyValue(
-                        scenarioResult.outputs.incremental.incrementalRevenue,
-                      )}
+                      secondary={{
+                        baseline: formatCurrencyValue(
+                          scenarioResult.outputs.baseline.revenue,
+                        ),
+                        delta: formatCurrencyValue(
+                          scenarioResult.outputs.incremental.incrementalRevenue,
+                        ),
+                      }}
                     />
                     <SummaryRow
                       label="Gross profit"
-                      baseline={formatCurrencyValue(
-                        scenarioResult.outputs.baseline.grossProfit,
-                      )}
-                      abm={formatCurrencyValue(
+                      primary={formatCurrencyValue(
                         scenarioResult.outputs.abm.grossProfit,
                       )}
-                      delta={formatCurrencyValue(
-                        scenarioResult.outputs.incremental.incrementalGrossProfit,
-                      )}
+                      secondary={{
+                        baseline: formatCurrencyValue(
+                          scenarioResult.outputs.baseline.grossProfit,
+                        ),
+                        delta: formatCurrencyValue(
+                          scenarioResult.outputs.incremental.incrementalGrossProfit,
+                        ),
+                      }}
                     />
                     <SummaryRow
-                      label="ROI"
-                      baseline={"—"}
-                      abm={"—"}
-                      delta={
-                        typeof scenarioResult.outputs.incremental.roi === "number"
-                          ? formatPercentValue(
-                              scenarioResult.outputs.incremental.roi * 100,
-                              1,
-                            )
-                          : "—"
-                      }
+                      label="Programme cost"
+                      primary={formatCurrencyValue(totalCostValue)}
+                      secondary={{
+                        baseline: formatCurrencyValue(0),
+                        delta: formatCurrencyValue(totalCostValue),
+                      }}
+                    />
+                    <SummaryRow
+                      label="Profit after spend"
+                      primary={formatCurrencyValue(profitAfterSpendValue)}
+                      secondary={{
+                        baseline: formatCurrencyValue(baselineGrossProfitValue),
+                        delta: formatCurrencyValue(deltaProfitAfterSpendValue),
+                      }}
+                    />
+                    <SummaryRow
+                      label="Net ROI (incremental)"
+                      primary="—"
+                      secondary={{
+                        baseline: "—",
+                        delta:
+                          typeof scenarioResult.outputs.incremental.roi === "number"
+                            ? formatPercentValue(
+                                scenarioResult.outputs.incremental.roi * 100,
+                                1,
+                              )
+                            : "—",
+                      }}
+                    />
+                    <SummaryRow
+                      label="Gross ROMI"
+                      primary="—"
+                      secondary={{
+                        baseline: "—",
+                        delta:
+                          typeof scenarioResult.outputs.incremental.grossRoi === "number"
+                            ? formatPercentValue(
+                                scenarioResult.outputs.incremental.grossRoi * 100,
+                                1,
+                              )
+                            : "—",
+                      }}
                     />
                   </tbody>
                 </table>
@@ -1894,7 +2335,7 @@ function ProgrammeStep({
         </div>
         <div className="flex-1 space-y-3">
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Quick presets
+            Expectations Presets
           </span>
           <div className="grid gap-2">
             {(Object.keys(PRESET_CONFIG) as PresetKey[]).map((key) => {
@@ -2042,7 +2483,7 @@ function MarketStep({
     <div className="space-y-6">
       <div className="rounded-lg border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
         <p>
-          {tierNote.label} preset loaded: we start you at {tierNote.defaultAccounts} accounts. Adjust below to mirror your market.
+          {tierNote.label} lens: we typically see around {tierNote.defaultAccounts} accounts at this level of personalisation. Keep your own numbers if they differ.
         </p>
       </div>
       <div className="space-y-6">
@@ -2124,7 +2565,7 @@ type BudgetCapacitySummary = {
 
 type BudgetStepProps = {
   control: Control<ScenarioInputSchema>;
-  totalCost: number;
+  availableBudgetTotal: number;
   onTotalCostChange: (value: number) => void;
   capacitySummary: BudgetCapacitySummary;
   alignmentLevel: AlignmentLevel;
@@ -2133,7 +2574,7 @@ type BudgetStepProps = {
 
 function BudgetStep({
   control,
-  totalCost,
+  availableBudgetTotal,
   onTotalCostChange,
   capacitySummary,
   alignmentLevel,
@@ -2222,7 +2663,7 @@ function BudgetStep({
             Total programme investment
           </label>
           <Input
-            value={totalCost}
+            value={availableBudgetTotal}
             onChange={(event) => onTotalCostChange(Number(event.target.value))}
             inputMode="decimal"
             className="text-base"
@@ -2230,6 +2671,21 @@ function BudgetStep({
           <p className="mt-1 text-xs text-muted-foreground">
             Enter the blended annual budget. Split it out if you want more detail.
           </p>
+          <details className="mt-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer text-xs font-semibold text-foreground">
+              What to include?
+            </summary>
+            <div className="mt-1 space-y-1">
+              <p>
+                Include all ABM programme spend for the year: people costs, paid media, data/tech, content, agency,
+                and other execution line items dedicated to this plan.
+              </p>
+              <p>
+                Exclude wider sales or marketing costs that are already accounted for elsewhere so the ROI view stays
+                focused on incremental programme investment.
+              </p>
+            </div>
+          </details>
         </div>
 
         <AdvancedBlock title="Break down the budget (optional)">
@@ -2761,7 +3217,7 @@ type KpiTileProps = {
   label: string;
   value: string;
   helper?: string;
-  tone?: "positive" | "neutral";
+  tone?: "positive" | "neutral" | "negative";
 };
 
 function KpiTile({ label, value, helper, tone = "neutral" }: KpiTileProps) {
@@ -2808,18 +3264,30 @@ function AdvancedBlock({ title, children }: AdvancedBlockProps) {
 
 type SummaryRowProps = {
   label: string;
-  baseline: string;
-  abm: string;
-  delta: string;
+  primary: string;
+  secondary?: {
+    baseline: string;
+    delta: string;
+  };
+  hint?: ReactNode;
 };
 
-function SummaryRow({ label, baseline, abm, delta }: SummaryRowProps) {
+function SummaryRow({ label, primary, secondary, hint }: SummaryRowProps) {
   return (
     <tr className="border-b last:border-b-0">
-      <td className="py-2 pr-4 font-medium text-foreground">{label}</td>
-      <td className="py-2 pr-4">{baseline}</td>
-      <td className="py-2 pr-4">{abm}</td>
-      <td className="py-2 font-medium text-cta">{delta}</td>
+      <td className="py-2 pr-4 font-medium text-foreground">
+        <span className="inline-flex items-center gap-1">
+          {label}
+          <HintTooltip hint={hint} label={label} />
+        </span>
+      </td>
+      <td className="py-2 pr-4">{primary}</td>
+      {secondary ? (
+        <>
+          <td className="py-2 pr-4">{secondary.baseline}</td>
+          <td className="py-2 pr-4 font-medium text-cta">{secondary.delta}</td>
+        </>
+      ) : null}
     </tr>
   );
 }

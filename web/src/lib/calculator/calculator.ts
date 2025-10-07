@@ -19,8 +19,14 @@ const ONE_HUNDRED = 100;
 const toDecimal = (value: number): number => value / ONE_HUNDRED;
 const floorZero = (value: number): number => (Number.isFinite(value) ? Math.max(0, value) : 0);
 
-export const sumProgrammeCosts = (costs: ProgrammeCosts): number =>
-  floorZero(
+export const sumProgrammeCosts = (costs: ProgrammeCosts): number => {
+  const override = Number.isFinite(costs.totalOverride) ? floorZero(costs.totalOverride ?? 0) : 0;
+
+  if (override > 0) {
+    return override;
+  }
+
+  return floorZero(
     costs.people +
       costs.media +
       costs.dataTech +
@@ -28,6 +34,7 @@ export const sumProgrammeCosts = (costs: ProgrammeCosts): number =>
       costs.agency +
       costs.other
   );
+};
 
 const isFiniteNumber = (value: number): value is number => Number.isFinite(value);
 
@@ -354,8 +361,8 @@ export const calculateIncremental = (
   costs: ProgrammeCosts,
 ): IncrementalOutputs => {
   const totalCost = sumProgrammeCosts(costs);
-  const incrementalRevenue = floorZero(abm.revenue - baseline.revenue);
-  const incrementalGrossProfit = floorZero(abm.grossProfit - baseline.grossProfit);
+  const incrementalRevenue = abm.revenue - baseline.revenue;
+  const incrementalGrossProfit = abm.grossProfit - baseline.grossProfit;
 
   return {
     incrementalRevenue,
