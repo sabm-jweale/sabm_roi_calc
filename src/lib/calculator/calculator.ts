@@ -21,8 +21,14 @@ const ONE_HUNDRED = 100;
 const toDecimal = (value: number): number => value / ONE_HUNDRED;
 const floorZero = (value: number): number => (Number.isFinite(value) ? Math.max(0, value) : 0);
 
-export const sumProgrammeCosts = (costs: ProgrammeCosts): number =>
-  floorZero(
+export const sumProgrammeCosts = (costs: ProgrammeCosts): number => {
+  const override = Number.isFinite(costs.totalOverride) ? floorZero(costs.totalOverride ?? 0) : 0;
+
+  if (override > 0) {
+    return override;
+  }
+
+  return floorZero(
     costs.people +
       costs.media +
       costs.dataTech +
@@ -30,6 +36,7 @@ export const sumProgrammeCosts = (costs: ProgrammeCosts): number =>
       costs.agency +
       costs.other
   );
+};
 
 export const calculateBaseline = (inputs: ScenarioInputs["market"]): BaselineOutputs => {
   const inMarketAccounts = floorZero(inputs.targetAccounts * toDecimal(inputs.inMarketRate));
@@ -77,6 +84,14 @@ const calculateRoi = (incrementalGrossProfit: number, totalCost: number): number
   }
 
   return (incrementalGrossProfit - totalCost) / totalCost;
+};
+
+const calculateGrossRoi = (incrementalGrossProfit: number, totalCost: number): number | null => {
+  if (totalCost <= 0) {
+    return null;
+  }
+
+  return incrementalGrossProfit / totalCost;
 };
 
 const calculateBreakEvenWins = (
@@ -138,13 +153,19 @@ export const calculateIncremental = (
   costs: ProgrammeCosts,
 ): IncrementalOutputs => {
   const totalCost = sumProgrammeCosts(costs);
-  const incrementalRevenue = floorZero(abm.revenue - baseline.revenue);
-  const incrementalGrossProfit = floorZero(abm.grossProfit - baseline.grossProfit);
+  const incrementalRevenue = abm.revenue - baseline.revenue;
+  const incrementalGrossProfit = abm.grossProfit - baseline.grossProfit;
+  const incrementalWins = abm.expectedWins - baseline.expectedWins;
+  const profitAfterSpend = abm.grossProfit - totalCost;
 
   return {
     incrementalRevenue,
     incrementalGrossProfit,
+    totalCost,
+    profitAfterSpend,
+    incrementalWins,
     roi: calculateRoi(incrementalGrossProfit, totalCost),
+    grossRoi: calculateGrossRoi(incrementalGrossProfit, totalCost),
     breakEvenWins: calculateBreakEvenWins(totalCost, abm.acv, market.contributionMargin),
     paybackMonths: calculatePaybackMonths(programme, market, incrementalGrossProfit, totalCost),
   };
@@ -152,7 +173,7 @@ export const calculateIncremental = (
 
 export const calculateScenario = (inputs: ScenarioInputs): ScenarioResult => {
   const coverage = deriveCoverage(inputs.market, inputs.capacity);
-  const intensity = deriveIntensity(coverage.coverageRate);
+  const intensity = deriveIntensity(coverage.saturationRate);
   const alignmentMultipliers = deriveAlignmentMultipliers(inputs.alignment);
 
   const effectiveMarket = {

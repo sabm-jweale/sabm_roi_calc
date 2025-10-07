@@ -58,9 +58,24 @@ export const costsSchema = z
     content: num(0),
     agency: num(0),
     other: num(0),
+    totalOverride: num(0).optional(),
   })
-  .refine((value) => Object.values(value).some((cost) => cost > 0), {
-    message: "At least one cost line must be greater than zero.",
+  .refine((value) => {
+    const override = value.totalOverride ?? 0;
+    if (override > 0) {
+      return true;
+    }
+
+    return (
+      value.people > 0 ||
+      value.media > 0 ||
+      value.dataTech > 0 ||
+      value.content > 0 ||
+      value.agency > 0 ||
+      value.other > 0
+    );
+  }, {
+    message: "Provide a total investment or populate at least one cost category.",
   });
 
 export const capacitySchema = z
@@ -120,12 +135,12 @@ export const DEFAULT_SCENARIO: ScenarioInputs = scenarioSchema.parse({
     numberFormatLocale: "en-GB",
   },
   market: {
-    targetAccounts: 150,
-    inMarketRate: 18,
-    qualifiedOppsPerAccount: 1,
-    baselineWinRate: 22,
-    baselineAcv: 65_000,
-    contributionMargin: 55,
+    targetAccounts: 20,
+    inMarketRate: 34,
+    qualifiedOppsPerAccount: 1.3,
+    baselineWinRate: 26,
+    baselineAcv: 110_000,
+    contributionMargin: 64,
     salesCycleMonthsBaseline: 9,
     salesCycleMonthsAbm: 6,
   },
@@ -135,12 +150,12 @@ export const DEFAULT_SCENARIO: ScenarioInputs = scenarioSchema.parse({
     opportunityRateUplift: 25,
   },
   costs: {
-    people: 220_000,
-    media: 90_000,
-    dataTech: 45_000,
-    content: 60_000,
-    agency: 40_000,
-    other: 15_000,
+    people: 35_000,
+    media: 20_000,
+    dataTech: 15_000,
+    content: 15_000,
+    agency: 10_000,
+    other: 5_000,
   },
   capacity: {
     source: "budget",
@@ -154,8 +169,8 @@ export const DEFAULT_SCENARIO: ScenarioInputs = scenarioSchema.parse({
     level: "standard",
   },
   sensitivity: {
-    inMarketRange: [12, 18, 24],
-    winRateUpliftRange: [5, 10, 15],
+    inMarketRange: [24, 34, 44],
+    winRateUpliftRange: [6, 12, 18],
     resolution: 5,
   },
 });

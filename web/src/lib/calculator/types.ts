@@ -33,6 +33,7 @@ export interface ProgrammeCosts {
   content: number;
   agency: number;
   other: number;
+  totalOverride?: number;
 }
 
 export type AbmTier = "1to1" | "1toFew" | "1toMany";
