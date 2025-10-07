@@ -65,6 +65,7 @@ export interface CoverageSummary {
   teamCapacityAccounts: number;
   budgetCapacityAccounts: number | null;
   coverageRate: number;
+  saturationRate: number;
   bottleneck: CapacityBottleneck;
 }
 
@@ -90,6 +91,7 @@ export const deriveCoverage = (
     : Math.min(baseRequested, budgetAccounts ?? baseRequested);
 
   const coverageRate = safeTargets > 0 ? Math.min(1, treatedAccounts / safeTargets) : 0;
+  const saturationRate = baseRequested > 0 ? Math.min(1, treatedAccounts / baseRequested) : 0;
   const budgetSummaryCapacity =
     capacity.source === "budget"
       ? (budgetAccounts ?? safeTargets)
@@ -102,6 +104,7 @@ export const deriveCoverage = (
     teamCapacityAccounts: teamAccounts,
     budgetCapacityAccounts: budgetSummaryCapacity,
     coverageRate,
+    saturationRate,
     bottleneck: teamCapacity.bottleneck,
   };
 };

@@ -46,9 +46,24 @@ export const costsSchema = z
     content: z.number().min(0),
     agency: z.number().min(0),
     other: z.number().min(0),
+    totalOverride: z.number().min(0).optional(),
   })
-  .refine((value) => Object.values(value).some((cost) => cost > 0), {
-    message: "At least one cost line must be greater than zero.",
+  .refine((value) => {
+    const override = value.totalOverride ?? 0;
+    if (override > 0) {
+      return true;
+    }
+
+    return (
+      value.people > 0 ||
+      value.media > 0 ||
+      value.dataTech > 0 ||
+      value.content > 0 ||
+      value.agency > 0 ||
+      value.other > 0
+    );
+  }, {
+    message: "Provide a total investment or populate at least one cost category.",
   });
 
 const tierEnum = z.enum(["1to1", "1toFew", "1toMany"]);

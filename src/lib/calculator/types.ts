@@ -33,6 +33,7 @@ export interface ProgrammeCosts {
   content: number;
   agency: number;
   other: number;
+  totalOverride?: number;
 }
 
 export type CapacitySource = "budget" | "team";
@@ -89,6 +90,10 @@ export interface IncrementalOutputs {
   incrementalRevenue: number;
   incrementalGrossProfit: number;
   roi: Float | null;
+  grossRoi: Float | null;
+  totalCost: number;
+  profitAfterSpend: number;
+  incrementalWins: Float;
   breakEvenWins: number | null;
   paybackMonths: Float | null;
 }
